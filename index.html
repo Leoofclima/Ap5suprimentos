@@ -893,10 +893,10 @@
     html += '<div class="entry-req">solicitado por <b>'+escapeHtml(r.requested_by)+'</b>'+
             (isAdminIdentity() && r.requested_by_cpf ? ' <span style="color:var(--ink-faint);">· CPF '+formatCPF(r.requested_by_cpf)+'</span>' : '')+
             '</div>';
-    if(r.assigned_to){
+    if(r.assigned_to && isPending){
       html += '<div class="entry-req">🙋 sendo providenciado por <b>'+escapeHtml(r.assigned_to)+'</b></div>';
     }
-    if(r.postponed_until){
+    if(r.postponed_until && isPending){
       var pDate = new Date(r.postponed_until+'T00:00:00');
       var isPastDue = pDate < new Date(new Date().toDateString());
       html += '<div class="entry-req" style="color:'+(isPastDue?'var(--pending-ink)':'var(--ink-soft)')+'">⏳ adiado até <b>'+fmtDateOnly(pDate)+'</b>'+(isPastDue?' (já passou)':'')+'</div>';
