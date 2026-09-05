@@ -703,7 +703,7 @@
       if(form){
         wireFileDrop(form.querySelector('.file-drop'));
         form.querySelector('.confirm-deliver').addEventListener('click', function(){
-          submitDelivery(r.id, form);
+          submitDelivery(r, form);
         });
       }
       var thumbs = document.querySelectorAll('.di-thumb[data-id="'+r.id+'"]');
@@ -825,7 +825,7 @@
     // O .is('assigned_to', null) faz o banco só aceitar a mudança se NINGUÉM tiver
     // assumido ainda — isso evita que dois cliques quase simultâneos "ganhem" os dois.
     sb.from('requests')
-      .update({ assigned_to: identity.name, assigned_at: new Date().toISOString() })
+      .update({ assigned_to: identity.name, assigned_to_cpf: identity.cpf, assigned_at: new Date().toISOString() })
       .eq('id', id)
       .is('assigned_to', null)
       .select()
@@ -846,14 +846,25 @@
   }
   function releaseRequest(id){
     if(!ensureConfigured()) return;
-    sb.from('requests').update({ assigned_to: null, assigned_at: null }).eq('id', id).then(function(res){
+    if(!isAdminIdentity()){ window.alert('Só o administrador pode liberar um chamado já assumido.'); return; }
+    sb.from('requests').update({ assigned_to: null, assigned_to_cpf: null, assigned_at: null }).eq('id', id).then(function(res){
       if(res.error){ window.alert('Não foi possível soltar (' + res.error.message + ').'); return; }
       showToast('Chamado liberado.');
       loadRequests();
     });
   }
+  function canManageRequest(r){
+    if(isAdminIdentity()) return true;
+    if(!r.assigned_to_cpf) return true; // ninguém assumiu ainda: qualquer um pode agir
+    var identity = getIdentity();
+    return !!(identity && identity.cpf === r.assigned_to_cpf);
+  }
   function postponeRequest(r){
     if(!ensureConfigured()) return;
+    if(!canManageRequest(r)){
+      window.alert(r.assigned_to + ' assumiu esse chamado — só ' + r.assigned_to + ' ou o administrador pode adiar.');
+      return;
+    }
     var identity = getIdentity();
     var base = r.postponed_until ? new Date(r.postponed_until+'T00:00:00') : new Date();
     base.setDate(base.getDate()+1);
@@ -917,20 +928,27 @@
     }
 
     if(isPending){
-      html += '<div class="deliver-toggle" style="display:flex; gap:8px; flex-wrap:wrap;">';
+      var canManage = canManageRequest(r);
+      html += '<div class="deliver-toggle" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">';
       if(r.assigned_to){
-        html += '<button class="btn secondary release-btn" data-id="'+r.id+'">Soltar chamado</button>';
+        if(isAdminIdentity()){
+          html += '<button class="btn secondary release-btn" data-id="'+r.id+'">Soltar chamado</button>';
+        }
       } else {
         html += '<button class="btn secondary claim-btn" data-id="'+r.id+'">Assumir chamado</button>';
       }
-      html += '<button class="btn secondary postpone-btn" data-id="'+r.id+'">'+(r.postponed_until ? 'Adiar mais um dia' : 'Adiar p/ amanhã')+'</button>';
-      if(r.postponed_until){
-        html += '<button class="btn secondary cancel-postpone-btn" data-id="'+r.id+'">Cancelar adiamento</button>';
+      if(canManage){
+        html += '<button class="btn secondary postpone-btn" data-id="'+r.id+'">'+(r.postponed_until ? 'Adiar mais um dia' : 'Adiar p/ amanhã')+'</button>';
+        if(r.postponed_until){
+          html += '<button class="btn secondary cancel-postpone-btn" data-id="'+r.id+'">Cancelar adiamento</button>';
+        }
+        html += '<button class="btn secondary deliver-toggle-btn" data-id="'+r.id+'">'+
+                (state.openDeliverId===r.id ? 'Cancelar' : 'Marcar como entregue')+'</button>';
+      } else {
+        html += '<span style="font-size:12px; color:var(--ink-faint);">🔒 só '+escapeHtml(r.assigned_to)+' ou o admin pode adiar/entregar este chamado</span>';
       }
-      html += '<button class="btn secondary deliver-toggle-btn" data-id="'+r.id+'">'+
-              (state.openDeliverId===r.id ? 'Cancelar' : 'Marcar como entregue')+'</button>';
       html += '</div>';
-      html += '<div class="deliver-form'+(state.openDeliverId===r.id?' open':'')+'" data-id="'+r.id+'">';
+      html += '<div class="deliver-form'+(state.openDeliverId===r.id && canManage?' open':'')+'" data-id="'+r.id+'">';
       html += '<div class="field-grid">';
       html += '<div class="field"><label>Quem entregou</label><input type="text" class="d-name" value="'+escapeHtml(r.assigned_to||'')+'" placeholder="Nome de quem entregou"></div>';
       html += '<div class="field"><label>Onde comprou</label><input type="text" class="d-place" placeholder="Ex: Mercado Central, posto X"></div>';
@@ -1201,12 +1219,18 @@
   window.addEventListener('online', flushOfflineQueue);
   document.getElementById('submitReq').addEventListener('click', submitNewRequest);
 
-  function submitDelivery(id, form){
+  function submitDelivery(r, form){
+    var id = r.id;
     var name = form.querySelector('.d-name').value.trim();
     var place = form.querySelector('.d-place').value.trim();
     var value = parseFloat(form.querySelector('.d-value').value);
     var errEl = form.querySelector('.d-err');
     if(!requireConfigured(errEl)) return;
+    if(!canManageRequest(r)){
+      errEl.textContent = r.assigned_to + ' assumiu esse chamado — só ' + r.assigned_to + ' ou o administrador pode confirmar a entrega.';
+      errEl.style.display='inline';
+      return;
+    }
     if(!name){
       errEl.textContent = 'Informe quem entregou.';
       errEl.style.display='inline';
