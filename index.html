@@ -1,0 +1,884 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AP5 — Suprimentos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    /* Identidade fixa: casco preto, instrumentação verde. */
+    --paper: #070b09;
+    --paper-raised: #0e1712;
+    --ink: #e6f3ea;
+    --ink-soft: #7fa08d;
+    --ink-faint: #4d6459;
+    --line: #1d3327;
+    --accent: #2fdd8f;
+    --accent-deep: #7cf0b6;
+    --accent-tint: #12261c;
+    --pending: #e0a83c;
+    --pending-ink: #f3c979;
+    --pending-bg: #2c2211;
+    --delivered: #2fdd8f;
+    --delivered-ink: #8ff0bd;
+    --delivered-bg: #0f2a1c;
+    --danger: #e2685c;
+    --shadow: 0 1px 2px rgba(0,0,0,.45), 0 10px 30px -10px rgba(0,0,0,.7);
+    color-scheme: dark;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{ margin:0; background:var(--paper); }
+  body{
+    color:var(--ink);
+    font-family:'Public Sans', system-ui, sans-serif;
+    line-height:1.5;
+  }
+  ::selection{ background:var(--accent-tint); color:var(--accent-deep); }
+
+  .wrap{ max-width:920px; margin:0 auto; padding:40px 22px 90px; }
+
+  header.manifest-head{
+    border:1px solid var(--line);
+    border-radius:4px;
+    background:var(--paper-raised);
+    box-shadow:var(--shadow);
+    padding:28px 30px 22px;
+    margin-bottom:26px;
+    position:relative;
+  }
+  .eyebrow{
+    font-family:'JetBrains Mono', monospace;
+    font-size:11.5px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--accent);
+    display:flex;
+    align-items:center;
+    gap:8px;
+    margin-bottom:10px;
+  }
+  .eyebrow .dotline{ flex:1; height:1px; background:repeating-linear-gradient(to right, var(--line) 0 4px, transparent 4px 8px); }
+  h1.vessel{
+    font-family:'Fraunces', serif;
+    font-optical-sizing:auto;
+    font-weight:600;
+    font-size:clamp(2.1rem, 5vw, 3rem);
+    margin:0 0 4px;
+    letter-spacing:-.01em;
+    text-wrap:balance;
+  }
+  .vessel-sub{ color:var(--ink-soft); font-size:15px; margin:0 0 20px; }
+  .stats-row{ display:flex; flex-wrap:wrap; gap:10px; border-top:1px solid var(--line); padding-top:18px; }
+  .stat{ flex:1 1 130px; min-width:120px; }
+  .stat .n{ font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums; font-size:1.5rem; font-weight:600; }
+  .stat.pending .n{ color:var(--pending); }
+  .stat.delivered .n{ color:var(--delivered); }
+  .stat .lbl{ font-size:11.5px; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-faint); margin-top:2px; }
+
+  .dev-note{
+    display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+    font-size:13px; color:var(--ink-soft);
+    background:var(--accent-tint); border:1px solid var(--line); border-left:3px solid var(--accent);
+    border-radius:4px; padding:11px 16px; margin-bottom:18px;
+  }
+  .dev-note strong{ color:var(--ink); }
+  .dev-tag{
+    font-family:'JetBrains Mono', monospace; font-size:10.5px; text-transform:uppercase; letter-spacing:.08em;
+    font-weight:600; color:#07130d; background:var(--accent); padding:3px 9px; border-radius:20px; white-space:nowrap;
+  }
+
+  #dbBanner{
+    display:none;
+    font-family:'JetBrains Mono', monospace;
+    font-size:12.5px;
+    background:var(--pending-bg);
+    color:var(--pending-ink);
+    border:1px solid var(--pending);
+    border-radius:4px;
+    padding:9px 14px;
+    margin-bottom:20px;
+    white-space:pre-line;
+  }
+
+  section.composer{ border:1px solid var(--line); border-radius:4px; background:var(--paper-raised); box-shadow:var(--shadow); margin-bottom:28px; overflow:hidden; }
+  .composer-head{ display:flex; align-items:center; justify-content:space-between; padding:16px 22px; cursor:pointer; user-select:none; }
+  .composer-head h2{ font-family:'Fraunces', serif; font-weight:600; font-size:1.15rem; margin:0; }
+  .composer-head .chev{ color:var(--ink-faint); transition:transform .18s ease; font-size:13px; }
+  section.composer.open .composer-head .chev{ transform:rotate(180deg); }
+  .composer-body{ display:none; padding:4px 22px 24px; border-top:1px solid var(--line); }
+  section.composer.open .composer-body{ display:block; }
+
+  .field-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:18px; }
+  .field{ display:flex; flex-direction:column; gap:6px; }
+  .field.full{ grid-column:1 / -1; }
+  label{ font-size:11.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-faint); font-weight:600; }
+  input[type=text], input[type=number], textarea, select{
+    font-family:'Public Sans', sans-serif; font-size:14.5px; padding:10px 12px;
+    border:1px solid var(--line); border-radius:3px; background:var(--paper); color:var(--ink); outline:none; width:100%;
+  }
+  textarea{ resize:vertical; min-height:70px; font-family:'Public Sans', sans-serif; }
+  input:focus, textarea:focus, select:focus{ border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-tint); }
+  .cat-select{ display:flex; gap:8px; flex-wrap:wrap; }
+  .cat-opt{
+    font-family:'JetBrains Mono', monospace; font-size:12.5px; border:1px solid var(--line); border-radius:20px;
+    padding:7px 14px; cursor:pointer; display:flex; align-items:center; gap:7px; background:var(--paper); color:var(--ink-soft);
+  }
+  .cat-opt .sw{ width:8px; height:8px; border-radius:50%; }
+  .cat-opt.active{ border-color:var(--accent); color:var(--accent-deep); background:var(--accent-tint); font-weight:600; }
+  .btn{
+    font-family:'Public Sans', sans-serif; font-weight:600; font-size:14px; border:none; border-radius:3px;
+    padding:11px 20px; cursor:pointer; background:var(--accent); color:#07130d; display:inline-flex; align-items:center; gap:8px;
+  }
+  .btn:hover{ background:var(--accent-deep); }
+  .btn.secondary{ background:transparent; color:var(--ink-soft); border:1px solid var(--line); }
+  .btn.secondary:hover{ border-color:var(--ink-faint); color:var(--ink); background:transparent; }
+  .btn.danger{ background:transparent; color:var(--danger); border:1px solid var(--danger); }
+  .btn.danger:hover{ background:var(--danger); color:#1a0705; }
+  .btn:disabled{ opacity:.55; cursor:not-allowed; }
+  .entry-admin{ margin-top:12px; display:flex; justify-content:flex-end; }
+  .composer-actions{ margin-top:18px; display:flex; gap:10px; align-items:center; }
+  .form-err{ color:var(--danger); font-size:12.5px; display:none; }
+
+  .filters{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:16px; }
+  .seg{ display:flex; border:1px solid var(--line); border-radius:20px; overflow:hidden; }
+  .seg button{ font-family:'JetBrains Mono', monospace; font-size:12px; border:none; background:var(--paper-raised); color:var(--ink-soft); padding:7px 14px; cursor:pointer; }
+  .seg button.active{ background:var(--accent); color:#07130d; }
+  .filt-spacer{ flex:1; }
+  .chip{
+    font-family:'JetBrains Mono', monospace; font-size:12px; border:1px solid var(--line); border-radius:20px; padding:7px 13px;
+    cursor:pointer; background:var(--paper-raised); color:var(--ink-soft); display:inline-flex; align-items:center; gap:6px;
+  }
+  .chip .sw{ width:7px; height:7px; border-radius:50%; }
+  .chip.active{ border-color:var(--accent); color:var(--accent-deep); background:var(--accent-tint); }
+  .refresh-btn{ font-family:'JetBrains Mono', monospace; font-size:12px; }
+
+  .empty{ text-align:center; padding:50px 20px; color:var(--ink-faint); font-size:14px; border:1px dashed var(--line); border-radius:4px; }
+  ul.manifest{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
+  li.entry{ display:flex; border:1px solid var(--line); border-radius:4px; background:var(--paper-raised); box-shadow:var(--shadow); overflow:hidden; }
+  .stripe{ width:5px; flex:none; }
+  .stripe.pending{ background:var(--pending); }
+  .stripe.delivered{ background:var(--delivered); }
+  .entry-body{ flex:1; padding:16px 18px; min-width:0; }
+  .entry-top{ display:flex; justify-content:space-between; align-items:flex-start; gap:14px; flex-wrap:wrap; }
+  .entry-meta-l{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .cat-tag{ font-family:'JetBrains Mono', monospace; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-soft); display:flex; align-items:center; gap:6px; }
+  .cat-tag .sw{ width:7px; height:7px; border-radius:50%; }
+  .status-pill{ font-family:'JetBrains Mono', monospace; font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; padding:3px 9px; border-radius:20px; font-weight:600; }
+  .status-pill.pending{ background:var(--pending-bg); color:var(--pending-ink); }
+  .status-pill.delivered{ background:var(--delivered-bg); color:var(--delivered-ink); }
+  .entry-desc{ margin:10px 0 6px; font-size:15px; color:var(--ink); text-wrap:pretty; }
+  .entry-meta-r{ text-align:right; font-family:'JetBrains Mono', monospace; font-size:11.5px; color:var(--ink-faint); white-space:nowrap; }
+  .entry-req{ font-size:12.5px; color:var(--ink-soft); }
+  .entry-req b{ color:var(--ink); font-weight:600; }
+
+  .delivery-info{ margin-top:12px; padding-top:12px; border-top:1px dashed var(--line); display:flex; gap:22px; flex-wrap:wrap; align-items:center; }
+  .di-col{ font-size:12.5px; color:var(--ink-soft); }
+  .di-col b{ display:block; color:var(--ink); font-size:13.5px; font-weight:600; }
+  .di-thumb{ width:56px; height:56px; border-radius:4px; object-fit:cover; border:1px solid var(--line); cursor:zoom-in; }
+
+  .deliver-toggle{ margin-top:12px; }
+  .deliver-form{ display:none; margin-top:14px; padding:16px; background:var(--paper); border:1px solid var(--line); border-radius:4px; }
+  .deliver-form.open{ display:block; }
+  .deliver-form .field-grid{ margin-top:0; }
+  .file-drop{ border:1px dashed var(--line); border-radius:4px; padding:14px; text-align:center; font-size:12.5px; color:var(--ink-faint); cursor:pointer; position:relative; }
+  .file-drop input{ position:absolute; inset:0; opacity:0; cursor:pointer; }
+  .file-drop.has-img{ padding:8px; }
+  .file-drop img{ max-height:90px; border-radius:3px; display:block; margin:0 auto; }
+
+  footer.hint{ text-align:center; color:var(--ink-faint); font-size:12px; margin-top:36px; font-family:'JetBrains Mono', monospace; }
+
+  #lightbox{ position:fixed; inset:0; background:rgba(0,0,0,.86); display:none; align-items:center; justify-content:center; z-index:50; padding:30px; cursor:zoom-out; }
+  #lightbox.open{ display:flex; }
+  #lightbox img{ max-width:100%; max-height:100%; border-radius:6px; box-shadow:0 20px 60px rgba(0,0,0,.6); }
+
+  @media (max-width:600px){
+    .field-grid{ grid-template-columns:1fr; }
+    .entry-meta-r{ text-align:left; }
+    .entry-top{ flex-direction:column; align-items:flex-start; }
+  }
+
+  #loginGate{ position:fixed; inset:0; background:var(--paper); display:flex; align-items:center; justify-content:center; z-index:100; padding:24px; }
+  #loginGate.hidden{ display:none; }
+  .field.hidden{ display:none; }
+  .login-card{ width:100%; max-width:380px; border:1px solid var(--line); border-radius:4px; background:var(--paper-raised); box-shadow:var(--shadow); padding:32px 28px; }
+  .login-card h1{ font-family:'Fraunces', serif; font-weight:600; font-size:1.5rem; margin:0 0 6px; }
+  .login-card .login-sub{ color:var(--ink-soft); font-size:13.5px; margin:0 0 22px; }
+  .login-card .field{ margin-bottom:16px; display:flex; flex-direction:column; gap:6px; }
+  .login-err{ color:var(--danger); font-size:12.5px; display:none; margin:-4px 0 14px; }
+
+  .wrap.hidden{ display:none; }
+  .session-bar{ display:none; align-items:center; justify-content:flex-end; gap:10px; font-size:12.5px; color:var(--ink-soft); margin-bottom:14px; }
+  .session-bar b{ color:var(--ink); }
+  .session-bar button{ font-family:'JetBrains Mono', monospace; font-size:11.5px; background:transparent; border:1px solid var(--line); color:var(--ink-soft); border-radius:20px; padding:5px 12px; cursor:pointer; }
+  .session-bar button:hover{ border-color:var(--ink-faint); color:var(--ink); }
+</style>
+</head>
+<body>
+
+<div id="loginGate">
+  <div class="login-card">
+    <div class="eyebrow">AP MARINE LTDA <span class="dotline"></span> ACESSO</div>
+    <h1>Identifique-se</h1>
+    <p class="login-sub">Informe seu nome e CPF para acessar o registro de bordo do AP5.</p>
+    <div class="field">
+      <label>Nome completo</label>
+      <input type="text" id="loginName" placeholder="Seu nome">
+    </div>
+    <div class="field">
+      <label>CPF</label>
+      <input type="text" id="loginCpf" placeholder="000.000.000-00" inputmode="numeric" maxlength="14">
+    </div>
+    <div class="field hidden" id="loginPasswordField">
+      <label>Senha</label>
+      <input type="password" id="loginPassword" placeholder="Senha de administrador">
+    </div>
+    <span class="login-err" id="loginErr"></span>
+    <button class="btn" id="loginSubmit" style="width:100%; justify-content:center;">Entrar</button>
+  </div>
+</div>
+
+<div class="wrap hidden">
+
+  <div class="session-bar" id="sessionBar">
+    Conectado como <b id="sessionName"></b>
+    <button id="logoutBtn">Sair</button>
+  </div>
+
+  <header class="manifest-head">
+    <div class="eyebrow">AP MARINE LTDA <span class="dotline"></span> REGISTRO DE BORDO</div>
+    <h1 class="vessel">AP5 — Suprimentos</h1>
+    <p class="vessel-sub">Solicitações de manutenção, provisões e combustível da embarcação. Quem precisa, registra aqui; quem entrega, marca como atendido.</p>
+    <div class="stats-row">
+      <div class="stat"><div class="n" id="statTotal">0</div><div class="lbl">Registradas</div></div>
+      <div class="stat pending"><div class="n" id="statPending">0</div><div class="lbl">Pendentes</div></div>
+      <div class="stat delivered"><div class="n" id="statDelivered">0</div><div class="lbl">Entregues</div></div>
+      <div class="stat"><div class="n" id="statValue">R$ 0</div><div class="lbl">Total entregue (mês)</div></div>
+    </div>
+  </header>
+
+  <div class="dev-note">
+    <span class="dev-tag">Em testes</span>
+    Ferramenta desenvolvida por <strong>Leonardo</strong> (AP Marine LTDA) e ainda em período de testes — dados e funcionamento podem mudar. Encontrou algo estranho? Me avise diretamente.
+  </div>
+
+  <div id="dbBanner"></div>
+
+  <section class="composer" id="composer">
+    <div class="composer-head" id="composerToggle">
+      <h2>+ Nova solicitação</h2>
+      <span class="chev">▾</span>
+    </div>
+    <div class="composer-body">
+      <div class="field full">
+        <label>Categoria</label>
+        <div class="cat-select" id="catSelectNew"></div>
+      </div>
+      <div class="field-grid">
+        <div class="field full">
+          <label>O que está sendo solicitado</label>
+          <textarea id="reqDesc" placeholder="Ex: 2 galões de óleo lubrificante 15W40, filtro de combustível cod. XYZ..."></textarea>
+        </div>
+        <div class="field">
+          <label>Seu nome</label>
+          <input type="text" id="reqName" placeholder="Nome de quem solicita">
+        </div>
+      </div>
+      <div class="composer-actions">
+        <button class="btn" id="submitReq">Registrar solicitação</button>
+        <span class="form-err" id="reqErr">Preencha categoria, descrição e seu nome.</span>
+      </div>
+    </div>
+  </section>
+
+  <div class="filters">
+    <div class="seg" id="statusSeg">
+      <button data-v="all" class="active">Todas</button>
+      <button data-v="pending">Pendentes</button>
+      <button data-v="delivered">Entregues</button>
+    </div>
+    <div class="filt-spacer"></div>
+    <div id="catFilterRow" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
+    <button class="btn secondary refresh-btn" id="refreshBtn">↻ Atualizar</button>
+  </div>
+
+  <ul class="manifest" id="manifestList"></ul>
+  <div class="empty" id="emptyState" style="display:none;">Nenhuma solicitação neste filtro ainda.</div>
+
+  <footer class="hint">AP5 · registro compartilhado da tripulação</footer>
+</div>
+
+<div id="lightbox"><img id="lightboxImg" src=""></div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ======================================================================
+  // CONFIGURAÇÃO — preencha com os dados do seu projeto Supabase.
+  // Veja o README.md para o passo a passo de onde encontrar isso.
+  // ======================================================================
+  var SUPABASE_URL = "https://vglmemknriwynhezzkhk.supabase.co";
+  var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZnbG1lbWtucml3eW5oZXp6a2hrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2Mjk2ODcsImV4cCI6MjEwNDIwNTY4N30.vZ7VFae2sk2s4OfQlGE_hiJx_tDcse7JoVZbW-w_DwA";
+  // ======================================================================
+
+  var CATEGORIES = [
+    { key:'manutencao', label:'Manutenção', color:'#d3a25a' },
+    { key:'provisoes',  label:'Provisões',   color:'#4fd6bb' },
+    { key:'combustivel',label:'Combustível', color:'#e58259' },
+    { key:'outros',     label:'Outros',      color:'#8fa89c' }
+  ];
+  function catInfo(key){
+    for(var i=0;i<CATEGORIES.length;i++) if(CATEGORIES[i].key===key) return CATEGORIES[i];
+    return CATEGORIES[3];
+  }
+
+  // ---------- login / identidade ----------
+  // Identificação simples: guarda nome+CPF no navegador, sem checar contra cadastro algum.
+  var IDENTITY_KEY = 'ap5_identity';
+
+  // CPF com permissão de administrador — único autorizado a excluir chamados, independente do status.
+  var ADMIN_CPF = '62195938390';
+  // Senha exigida apenas para esse CPF, guardada como hash SHA-256 (não em texto puro no código-fonte).
+  var ADMIN_PASSWORD_HASH = 'b8fbc25757f3d845772babd2a83774d071e3293820623a9923270297a964b025';
+  function isAdminIdentity(){
+    var identity = getIdentity();
+    if(!identity) return false;
+    return String(identity.cpf||'').replace(/\D/g,'') === ADMIN_CPF;
+  }
+  function sha256Hex(text){
+    var data = new TextEncoder().encode(text);
+    return crypto.subtle.digest('SHA-256', data).then(function(buf){
+      var bytes = new Uint8Array(buf);
+      var hex = '';
+      for(var i=0;i<bytes.length;i++) hex += bytes[i].toString(16).padStart(2,'0');
+      return hex;
+    });
+  }
+
+  function formatCPF(v){
+    v = v.replace(/\D/g,'').slice(0,11);
+    if(v.length>9) return v.replace(/(\d{3})(\d{3})(\d{3})(\d{1,2})/, '$1.$2.$3-$4');
+    if(v.length>6) return v.replace(/(\d{3})(\d{3})(\d{1,3})/, '$1.$2.$3');
+    if(v.length>3) return v.replace(/(\d{3})(\d{1,3})/, '$1.$2');
+    return v;
+  }
+
+  function isValidCPF(cpf){
+    cpf = String(cpf||'').replace(/\D/g,'');
+    if(cpf.length!==11 || /^(\d)\1{10}$/.test(cpf)) return false;
+    var sum=0, i, d1, d2;
+    for(i=0;i<9;i++) sum += parseInt(cpf.charAt(i),10) * (10-i);
+    d1 = (sum*10) % 11; if(d1===10) d1=0;
+    if(d1 !== parseInt(cpf.charAt(9),10)) return false;
+    sum=0;
+    for(i=0;i<10;i++) sum += parseInt(cpf.charAt(i),10) * (11-i);
+    d2 = (sum*10) % 11; if(d2===10) d2=0;
+    if(d2 !== parseInt(cpf.charAt(10),10)) return false;
+    return true;
+  }
+
+  function getIdentity(){
+    try{
+      var raw = localStorage.getItem(IDENTITY_KEY);
+      return raw ? JSON.parse(raw) : null;
+    }catch(e){ return null; }
+  }
+  function setIdentity(identity){ localStorage.setItem(IDENTITY_KEY, JSON.stringify(identity)); }
+  function clearIdentity(){ localStorage.removeItem(IDENTITY_KEY); }
+
+  function showGate(){
+    document.getElementById('loginGate').classList.remove('hidden');
+    document.querySelector('.wrap').classList.add('hidden');
+    document.getElementById('sessionBar').style.display = 'none';
+  }
+  function showApp(identity){
+    document.getElementById('loginGate').classList.add('hidden');
+    document.querySelector('.wrap').classList.remove('hidden');
+    document.getElementById('sessionBar').style.display = 'flex';
+    document.getElementById('sessionName').textContent = identity.name;
+  }
+
+  document.getElementById('loginCpf').addEventListener('input', function(){
+    this.value = formatCPF(this.value);
+    var isAdminCpf = this.value.replace(/\D/g,'') === ADMIN_CPF;
+    document.getElementById('loginPasswordField').classList.toggle('hidden', !isAdminCpf);
+    if(!isAdminCpf) document.getElementById('loginPassword').value = '';
+  });
+  document.getElementById('loginName').addEventListener('keydown', function(e){
+    if(e.key==='Enter') document.getElementById('loginCpf').focus();
+  });
+  document.getElementById('loginCpf').addEventListener('keydown', function(e){
+    if(e.key!=='Enter') return;
+    var isAdminCpf = this.value.replace(/\D/g,'') === ADMIN_CPF;
+    if(isAdminCpf) document.getElementById('loginPassword').focus();
+    else document.getElementById('loginSubmit').click();
+  });
+  document.getElementById('loginPassword').addEventListener('keydown', function(e){
+    if(e.key==='Enter') document.getElementById('loginSubmit').click();
+  });
+  document.getElementById('loginSubmit').addEventListener('click', function(){
+    var name = document.getElementById('loginName').value.trim();
+    var cpf = document.getElementById('loginCpf').value.trim();
+    var password = document.getElementById('loginPassword').value;
+    var errEl = document.getElementById('loginErr');
+    if(!name){
+      errEl.textContent = 'Informe seu nome.';
+      errEl.style.display = 'inline';
+      return;
+    }
+    if(!isValidCPF(cpf)){
+      errEl.textContent = 'CPF inválido. Verifique os números digitados.';
+      errEl.style.display = 'inline';
+      return;
+    }
+    var isAdminCpf = cpf.replace(/\D/g,'') === ADMIN_CPF;
+    if(!isAdminCpf){
+      errEl.style.display = 'none';
+      var identity = { name:name, cpf:cpf };
+      setIdentity(identity);
+      showApp(identity);
+      return;
+    }
+    if(!password){
+      errEl.textContent = 'Informe a senha de administrador.';
+      errEl.style.display = 'inline';
+      return;
+    }
+    var btn = document.getElementById('loginSubmit');
+    btn.disabled = true;
+    sha256Hex(password).then(function(hash){
+      btn.disabled = false;
+      if(hash !== ADMIN_PASSWORD_HASH){
+        errEl.textContent = 'Senha incorreta.';
+        errEl.style.display = 'inline';
+        return;
+      }
+      errEl.style.display = 'none';
+      var identity = { name:name, cpf:cpf };
+      setIdentity(identity);
+      showApp(identity);
+    });
+  });
+  document.getElementById('logoutBtn').addEventListener('click', function(){
+    clearIdentity();
+    document.getElementById('loginName').value = '';
+    document.getElementById('loginCpf').value = '';
+    document.getElementById('loginPassword').value = '';
+    document.getElementById('loginPasswordField').classList.add('hidden');
+    showGate();
+  });
+
+  var state = {
+    requests: [],
+    filterStatus: 'all',
+    filterCat: null,
+    newCat: CATEGORIES[0].key,
+    openDeliverId: null
+  };
+
+  var configured = SUPABASE_URL.indexOf('COLE_AQUI') === -1 && SUPABASE_ANON_KEY.indexOf('COLE_AQUI') === -1;
+  var sb = null;
+  if(configured && window.supabase){
+    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  }
+
+  function fmtDate(ts){
+    if(!ts) return '';
+    var d = new Date(ts);
+    return d.toLocaleDateString('pt-BR', {day:'2-digit',month:'2-digit',year:'2-digit'}) + ' ' +
+           d.toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'});
+  }
+  function fmtMoney(v){
+    if(v==null || isNaN(v)) return 'R$ 0';
+    return 'R$ ' + Number(v).toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2});
+  }
+  function escapeHtml(s){
+    return String(s==null?'':s).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+
+  function renderCatSelect(){
+    var row = document.getElementById('catSelectNew');
+    row.innerHTML = CATEGORIES.map(function(c){
+      return '<button type="button" class="cat-opt'+(state.newCat===c.key?' active':'')+'" data-k="'+c.key+'">'+
+             '<span class="sw" style="background:'+c.color+'"></span>'+c.label+'</button>';
+    }).join('');
+    Array.prototype.forEach.call(row.querySelectorAll('.cat-opt'), function(btn){
+      btn.addEventListener('click', function(){
+        state.newCat = btn.getAttribute('data-k');
+        renderCatSelect();
+      });
+    });
+  }
+
+  function renderCatFilter(){
+    var row = document.getElementById('catFilterRow');
+    var html = '<button class="chip'+(state.filterCat===null?' active':'')+'" data-k="">Todas categorias</button>';
+    html += CATEGORIES.map(function(c){
+      return '<button class="chip'+(state.filterCat===c.key?' active':'')+'" data-k="'+c.key+'">'+
+             '<span class="sw" style="background:'+c.color+'"></span>'+c.label+'</button>';
+    }).join('');
+    row.innerHTML = html;
+    Array.prototype.forEach.call(row.querySelectorAll('.chip'), function(btn){
+      btn.addEventListener('click', function(){
+        var k = btn.getAttribute('data-k');
+        state.filterCat = k === '' ? null : k;
+        renderCatFilter();
+        renderList();
+      });
+    });
+  }
+
+  document.getElementById('statusSeg').addEventListener('click', function(e){
+    var btn = e.target.closest('button');
+    if(!btn) return;
+    state.filterStatus = btn.getAttribute('data-v');
+    Array.prototype.forEach.call(document.querySelectorAll('#statusSeg button'), function(b){
+      b.classList.toggle('active', b===btn);
+    });
+    renderList();
+  });
+
+  document.getElementById('composerToggle').addEventListener('click', function(){
+    document.getElementById('composer').classList.toggle('open');
+  });
+
+  document.getElementById('refreshBtn').addEventListener('click', function(){
+    loadRequests();
+  });
+
+  function renderStats(){
+    var total = state.requests.length;
+    var pending = state.requests.filter(function(r){return r.status==='pending';}).length;
+    var delivered = state.requests.filter(function(r){return r.status==='delivered';}).length;
+    var now = new Date();
+    var monthSum = 0;
+    state.requests.forEach(function(r){
+      if(r.status==='delivered' && r.delivered_at){
+        var d = new Date(r.delivered_at);
+        if(d.getMonth()===now.getMonth() && d.getFullYear()===now.getFullYear()){
+          monthSum += Number(r.total_value)||0;
+        }
+      }
+    });
+    document.getElementById('statTotal').textContent = total;
+    document.getElementById('statPending').textContent = pending;
+    document.getElementById('statDelivered').textContent = delivered;
+    document.getElementById('statValue').textContent = fmtMoney(monthSum);
+  }
+
+  function renderList(){
+    var list = document.getElementById('manifestList');
+    var empty = document.getElementById('emptyState');
+    var items = state.requests.filter(function(r){
+      if(state.filterStatus!=='all' && r.status!==state.filterStatus) return false;
+      if(state.filterCat && r.category!==state.filterCat) return false;
+      return true;
+    });
+    if(items.length===0){
+      list.innerHTML='';
+      empty.style.display='block';
+      renderStats();
+      return;
+    }
+    empty.style.display='none';
+    list.innerHTML = items.map(renderEntry).join('');
+    items.forEach(function(r){
+      var toggleBtn = document.querySelector('.deliver-toggle-btn[data-id="'+r.id+'"]');
+      if(toggleBtn){
+        toggleBtn.addEventListener('click', function(){
+          state.openDeliverId = state.openDeliverId===r.id ? null : r.id;
+          renderList();
+        });
+      }
+      var form = document.querySelector('.deliver-form[data-id="'+r.id+'"]');
+      if(form){
+        wireFileDrop(form.querySelector('.file-drop'));
+        form.querySelector('.confirm-deliver').addEventListener('click', function(){
+          submitDelivery(r.id, form);
+        });
+      }
+      var thumbs = document.querySelectorAll('.di-thumb[data-id="'+r.id+'"]');
+      thumbs.forEach(function(t){
+        t.addEventListener('click', function(){
+          document.getElementById('lightboxImg').src = t.getAttribute('data-full');
+          document.getElementById('lightbox').classList.add('open');
+        });
+      });
+      var delBtn = document.querySelector('.delete-btn[data-id="'+r.id+'"]');
+      if(delBtn){
+        delBtn.addEventListener('click', function(){
+          deleteRequest(r.id, delBtn);
+        });
+      }
+    });
+    renderStats();
+  }
+
+  function renderEntry(r){
+    var cat = catInfo(r.category);
+    var isPending = r.status==='pending';
+    var html = '<li class="entry">';
+    html += '<div class="stripe '+r.status+'"></div>';
+    html += '<div class="entry-body">';
+    html += '<div class="entry-top">';
+    html += '<div class="entry-meta-l">';
+    html += '<span class="cat-tag"><span class="sw" style="background:'+cat.color+'"></span>'+cat.label+'</span>';
+    html += '<span class="status-pill '+r.status+'">'+(isPending?'Pendente':'Entregue')+'</span>';
+    html += '</div>';
+    html += '<div class="entry-meta-r">'+fmtDate(r.created_at)+'</div>';
+    html += '</div>';
+    html += '<div class="entry-desc">'+escapeHtml(r.description)+'</div>';
+    html += '<div class="entry-req">solicitado por <b>'+escapeHtml(r.requested_by)+'</b></div>';
+
+    if(!isPending){
+      html += '<div class="delivery-info">';
+      if(r.receipt_url){
+        html += '<img class="di-thumb" data-id="'+r.id+'" data-full="'+r.receipt_url+'" src="'+r.receipt_url+'">';
+      }
+      html += '<div class="di-col">Entregue por<b>'+escapeHtml(r.delivered_by||'—')+'</b></div>';
+      html += '<div class="di-col">Onde comprou<b>'+escapeHtml(r.purchase_place||'—')+'</b></div>';
+      html += '<div class="di-col">Valor total<b>'+fmtMoney(r.total_value)+'</b></div>';
+      html += '<div class="di-col">Data da entrega<b>'+fmtDate(r.delivered_at)+'</b></div>';
+      html += '</div>';
+    }
+
+    if(isPending){
+      html += '<div class="deliver-toggle">';
+      html += '<button class="btn secondary deliver-toggle-btn" data-id="'+r.id+'">'+
+              (state.openDeliverId===r.id ? 'Cancelar' : 'Marcar como entregue')+'</button>';
+      html += '</div>';
+      html += '<div class="deliver-form'+(state.openDeliverId===r.id?' open':'')+'" data-id="'+r.id+'">';
+      html += '<div class="field-grid">';
+      html += '<div class="field"><label>Quem entregou</label><input type="text" class="d-name" placeholder="Nome de quem entregou"></div>';
+      html += '<div class="field"><label>Onde comprou</label><input type="text" class="d-place" placeholder="Ex: Mercado Central, posto X"></div>';
+      html += '<div class="field"><label>Valor total (R$)</label><input type="number" class="d-value" step="0.01" min="0" placeholder="0,00"></div>';
+      html += '<div class="field"><label>Comprovante (foto)</label><div class="file-drop">Toque para anexar imagem<input type="file" accept="image/*"></div></div>';
+      html += '</div>';
+      html += '<div class="composer-actions"><button class="btn confirm-deliver">Confirmar entrega</button><span class="form-err d-err">Informe quem entregou.</span></div>';
+      html += '</div>';
+    }
+
+    if(isAdminIdentity()){
+      html += '<div class="entry-admin">';
+      html += '<button class="btn danger delete-btn" data-id="'+r.id+'">Excluir chamado</button>';
+      html += '</div>';
+    }
+
+    html += '</div></li>';
+    return html;
+  }
+
+  document.getElementById('lightbox').addEventListener('click', function(){
+    this.classList.remove('open');
+  });
+
+  // ---------- file attach ----------
+  var pendingFiles = {}; // requestId -> {blob, ext}
+  function wireFileDrop(fileDrop){
+    var input = fileDrop.querySelector('input[type=file]');
+    if(!input) return;
+    input.addEventListener('change', function(){
+      var file = input.files[0];
+      if(!file) return;
+      fileDrop.textContent = 'Processando imagem…';
+      compressImage(file, function(blob){
+        var url = URL.createObjectURL(blob);
+        fileDrop.setAttribute('data-ready', '1');
+        fileDrop._blob = blob;
+        fileDrop.classList.add('has-img');
+        fileDrop.innerHTML = '<img src="'+url+'"><input type="file" accept="image/*">';
+        fileDrop._blob = blob;
+        wireFileDrop(fileDrop);
+      });
+    });
+  }
+
+  function compressImage(file, cb){
+    var reader = new FileReader();
+    reader.onload = function(e){
+      var img = new Image();
+      img.onload = function(){
+        var maxDim = 1100;
+        var scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+        var w = Math.round(img.width*scale), h = Math.round(img.height*scale);
+        var canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        canvas.toBlob(function(blob){ cb(blob); }, 'image/jpeg', 0.7);
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // ---------- writes ----------
+  function requireConfigured(errEl){
+    if(!sb){
+      errEl.textContent = 'O site ainda não está configurado — falta colar a URL e a chave do Supabase no index.html (veja o README.md).';
+      errEl.style.display='inline';
+      return false;
+    }
+    return true;
+  }
+
+  function submitNewRequest(){
+    var desc = document.getElementById('reqDesc').value.trim();
+    var name = document.getElementById('reqName').value.trim();
+    var errEl = document.getElementById('reqErr');
+    if(!requireConfigured(errEl)) return;
+    if(!desc || !name){
+      errEl.textContent = 'Preencha categoria, descrição e seu nome.';
+      errEl.style.display='inline';
+      return;
+    }
+    errEl.style.display='none';
+    var btn = document.getElementById('submitReq');
+    btn.disabled = true;
+    sb.from('requests').insert({
+      category: state.newCat,
+      description: desc,
+      requested_by: name,
+      status: 'pending'
+    }).then(function(res){
+      btn.disabled = false;
+      if(res.error){
+        errEl.textContent = 'Não foi possível salvar (' + res.error.message + ').';
+        errEl.style.display='inline';
+        return;
+      }
+      document.getElementById('reqDesc').value = '';
+      document.getElementById('reqName').value = '';
+      document.getElementById('composer').classList.remove('open');
+      loadRequests();
+    });
+  }
+  document.getElementById('submitReq').addEventListener('click', submitNewRequest);
+
+  function submitDelivery(id, form){
+    var name = form.querySelector('.d-name').value.trim();
+    var place = form.querySelector('.d-place').value.trim();
+    var value = parseFloat(form.querySelector('.d-value').value);
+    var errEl = form.querySelector('.d-err');
+    if(!requireConfigured(errEl)) return;
+    if(!name){
+      errEl.textContent = 'Informe quem entregou.';
+      errEl.style.display='inline';
+      return;
+    }
+    errEl.style.display='none';
+    var btn = form.querySelector('.confirm-deliver');
+    btn.disabled = true;
+
+    var fileDrop = form.querySelector('.file-drop');
+    var blob = fileDrop._blob;
+
+    function finishUpdate(receiptUrl){
+      sb.from('requests').update({
+        status: 'delivered',
+        delivered_by: name,
+        purchase_place: place,
+        total_value: isNaN(value) ? 0 : value,
+        receipt_url: receiptUrl || null,
+        delivered_at: new Date().toISOString()
+      }).eq('id', id).then(function(res){
+        btn.disabled = false;
+        if(res.error){
+          errEl.textContent = 'Não foi possível salvar (' + res.error.message + ').';
+          errEl.style.display='inline';
+          return;
+        }
+        state.openDeliverId = null;
+        loadRequests();
+      });
+    }
+
+    if(blob){
+      var path = id + '-' + Date.now() + '.jpg';
+      sb.storage.from('receipts').upload(path, blob, { contentType:'image/jpeg' }).then(function(res){
+        if(res.error){
+          btn.disabled = false;
+          errEl.textContent = 'Falha ao enviar a foto (' + res.error.message + ').';
+          errEl.style.display='inline';
+          return;
+        }
+        var pub = sb.storage.from('receipts').getPublicUrl(path);
+        finishUpdate(pub.data ? pub.data.publicUrl : null);
+      });
+    } else {
+      finishUpdate(null);
+    }
+  }
+
+  function deleteRequest(id, btn){
+    if(!isAdminIdentity()) return;
+    if(!sb) return;
+    if(!window.confirm('Excluir este chamado definitivamente? Esta ação não pode ser desfeita.')) return;
+    btn.disabled = true;
+    sb.from('requests').delete().eq('id', id).then(function(res){
+      btn.disabled = false;
+      if(res.error){
+        window.alert('Não foi possível excluir (' + res.error.message + ').');
+        return;
+      }
+      loadRequests();
+    });
+  }
+
+  // ---------- load ----------
+  function showBanner(msg){
+    var b = document.getElementById('dbBanner');
+    b.textContent = msg;
+    b.style.display = 'block';
+  }
+  function hideBanner(){
+    document.getElementById('dbBanner').style.display = 'none';
+  }
+
+  function seedLocalExample(){
+    state.requests = [
+      { id:'seed-1', category:'combustivel', description:'Abastecer 200L de diesel para próxima viagem.', requested_by:'Capitão Marcos', created_at: new Date(Date.now()-1000*60*60*20).toISOString(), status:'pending' },
+      { id:'seed-2', category:'provisoes', description:'Reposição de água mineral (20 galões) e mantimentos da cozinha.', requested_by:'Ana (cozinha)', created_at: new Date(Date.now()-1000*60*60*70).toISOString(), status:'delivered', delivered_by:'João', purchase_place:'Atacadão Porto', total_value:340.50, delivered_at: new Date(Date.now()-1000*60*60*40).toISOString() },
+      { id:'seed-3', category:'manutencao', description:'Filtro de óleo e correia do motor de bombordo.', requested_by:'Eng. Renato', created_at: new Date(Date.now()-1000*60*60*5).toISOString(), status:'pending' }
+    ];
+  }
+
+  function loadRequests(){
+    if(!sb){
+      seedLocalExample();
+      showBanner('Este site ainda não está conectado a um banco de dados — mostrando dados de exemplo (nada aqui é salvo).\nAbra o README.md para configurar em poucos minutos.');
+      renderList();
+      return;
+    }
+    sb.from('requests').select('*').order('created_at', {ascending:false}).limit(500).then(function(res){
+      if(res.error){
+        showBanner('Não foi possível carregar as solicitações (' + res.error.message + '). Verifique a configuração no README.md.');
+        return;
+      }
+      hideBanner();
+      state.requests = res.data || [];
+      renderList();
+    });
+  }
+
+  function init(){
+    var identity = getIdentity();
+    if(identity){ showApp(identity); } else { showGate(); }
+    renderCatSelect();
+    renderCatFilter();
+    loadRequests();
+    // Atualização automática a cada 12s, para todo mundo ver o que os outros fizeram.
+    if(sb){ setInterval(loadRequests, 12000); }
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
