@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AP5 — Suprimentos</title>
+<link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#070b09">
+<link rel="icon" href="./icon-192.png">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -140,7 +146,8 @@
   .btn.danger{ background:transparent; color:var(--danger); border:1px solid var(--danger); }
   .btn.danger:hover{ background:var(--danger); color:#1a0705; }
   .btn:disabled{ opacity:.55; cursor:not-allowed; }
-  .entry-admin{ margin-top:12px; display:flex; justify-content:flex-end; }
+  .entry-admin{ margin-top:12px; display:flex; justify-content:flex-end; gap:10px; }
+  .edit-form{ margin-top:14px; padding:16px; background:var(--paper); border:1px solid var(--line); border-radius:4px; }
   .composer-actions{ margin-top:18px; display:flex; gap:10px; align-items:center; }
   .form-err{ color:var(--danger); font-size:12.5px; display:none; }
 
@@ -160,6 +167,7 @@
   .empty{ text-align:center; padding:50px 20px; color:var(--ink-faint); font-size:14px; border:1px dashed var(--line); border-radius:4px; }
   ul.manifest{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
   li.entry{ display:flex; border:1px solid var(--line); border-radius:4px; background:var(--paper-raised); box-shadow:var(--shadow); overflow:hidden; }
+  li.entry.urgent-entry{ border-color:var(--danger); }
   .stripe{ width:5px; flex:none; }
   .stripe.pending{ background:var(--pending); }
   .stripe.delivered{ background:var(--delivered); }
@@ -286,6 +294,13 @@
         <label>Categoria</label>
         <div class="cat-select" id="catSelectNew"></div>
       </div>
+      <div class="field full">
+        <label>Prioridade</label>
+        <div class="cat-select" id="prioritySelectNew">
+          <button type="button" class="cat-opt active" data-p="normal"><span class="sw" style="background:var(--ink-faint)"></span>Normal</button>
+          <button type="button" class="cat-opt" data-p="urgente"><span class="sw" style="background:var(--danger)"></span>Urgente</button>
+        </div>
+      </div>
       <div class="field-grid">
         <div class="field full">
           <label>O que está sendo solicitado</label>
@@ -310,8 +325,10 @@
       <button data-v="delivered">Entregues</button>
     </div>
     <input type="text" id="searchBox" placeholder="Buscar por descrição ou nome…" style="flex:1 1 200px; max-width:240px;">
+    <button class="chip" id="urgentChip"><span class="sw" style="background:var(--danger)"></span>Só urgentes</button>
     <div class="filt-spacer"></div>
     <div id="catFilterRow" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
+    <button class="btn secondary" id="exportBtn">⭳ Exportar CSV</button>
     <button class="btn secondary refresh-btn" id="refreshBtn">↻ Atualizar</button>
   </div>
 
@@ -495,7 +512,10 @@
     filterStatus: 'all',
     filterCat: null,
     newCat: CATEGORIES[0].key,
+    newPriority: 'normal',
     openDeliverId: null,
+    editingId: null,
+    onlyUrgent: false,
     loading: true,
     search: ''
   };
@@ -563,6 +583,15 @@
     });
   }
 
+  Array.prototype.forEach.call(document.querySelectorAll('#prioritySelectNew .cat-opt'), function(btn){
+    btn.addEventListener('click', function(){
+      state.newPriority = btn.getAttribute('data-p');
+      Array.prototype.forEach.call(document.querySelectorAll('#prioritySelectNew .cat-opt'), function(b){
+        b.classList.toggle('active', b===btn);
+      });
+    });
+  });
+
   document.getElementById('statusSeg').addEventListener('click', function(e){
     var btn = e.target.closest('button');
     if(!btn) return;
@@ -583,6 +612,12 @@
 
   document.getElementById('searchBox').addEventListener('input', function(){
     state.search = this.value.trim();
+    renderList();
+  });
+
+  document.getElementById('urgentChip').addEventListener('click', function(){
+    state.onlyUrgent = !state.onlyUrgent;
+    this.classList.toggle('active', state.onlyUrgent);
     renderList();
   });
 
@@ -612,6 +647,7 @@
     var items = state.requests.filter(function(r){
       if(state.filterStatus!=='all' && r.status!==state.filterStatus) return false;
       if(state.filterCat && r.category!==state.filterCat) return false;
+      if(state.onlyUrgent && r.priority!=='urgente') return false;
       if(state.search){
         var q = state.search.toLowerCase();
         var hay = ((r.description||'') + ' ' + (r.requested_by||'')).toLowerCase();
@@ -656,19 +692,104 @@
           deleteRequest(r.id, delBtn);
         });
       }
+      var editToggleBtn = document.querySelector('.edit-toggle-btn[data-id="'+r.id+'"]');
+      if(editToggleBtn){
+        editToggleBtn.addEventListener('click', function(){
+          state.editingId = state.editingId===r.id ? null : r.id;
+          renderList();
+        });
+      }
+      var editForm = document.querySelector('.edit-form[data-id="'+r.id+'"]');
+      if(editForm){
+        editForm.querySelector('.save-edit').addEventListener('click', function(){
+          submitEdit(r.id, editForm, r.status==='pending');
+        });
+      }
     });
     renderStats();
+  }
+
+  function renderEditForm(r){
+    var isPending = r.status==='pending';
+    var html = '<div class="edit-form" data-id="'+r.id+'">';
+    html += '<div class="field-grid">';
+    html += '<div class="field"><label>Categoria</label><select class="e-cat">';
+    CATEGORIES.forEach(function(c){
+      html += '<option value="'+c.key+'"'+(r.category===c.key?' selected':'')+'>'+c.label+'</option>';
+    });
+    html += '</select></div>';
+    html += '<div class="field"><label>Prioridade</label><select class="e-priority">';
+    html += '<option value="normal"'+(r.priority!=='urgente'?' selected':'')+'>Normal</option>';
+    html += '<option value="urgente"'+(r.priority==='urgente'?' selected':'')+'>Urgente</option>';
+    html += '</select></div>';
+    html += '<div class="field full"><label>Descrição</label><textarea class="e-desc">'+escapeHtml(r.description)+'</textarea></div>';
+    html += '<div class="field"><label>Solicitado por</label><input type="text" class="e-reqby" value="'+escapeHtml(r.requested_by)+'"></div>';
+    if(!isPending){
+      html += '<div class="field"><label>Entregue por</label><input type="text" class="e-delivered-by" value="'+escapeHtml(r.delivered_by||'')+'"></div>';
+      html += '<div class="field"><label>Onde comprou</label><input type="text" class="e-place" value="'+escapeHtml(r.purchase_place||'')+'"></div>';
+      html += '<div class="field"><label>Valor total (R$)</label><input type="number" step="0.01" min="0" class="e-value" value="'+(r.total_value!=null?r.total_value:'')+'"></div>';
+    }
+    html += '</div>';
+    html += '<div class="composer-actions"><button class="btn save-edit">Salvar alterações</button><span class="form-err e-edit-err">Não foi possível salvar.</span></div>';
+    if(!isPending){ html += '<div style="font-size:11.5px;color:var(--ink-faint);margin-top:8px;">O comprovante (foto) não pode ser trocado por aqui — exclua e recrie o chamado se precisar substituir a imagem.</div>'; }
+    html += '</div>';
+    return html;
+  }
+
+  function submitEdit(id, form, isPending){
+    var errEl = form.querySelector('.e-edit-err');
+    if(!requireConfigured(errEl)) return;
+    var payload = {
+      category: form.querySelector('.e-cat').value,
+      priority: form.querySelector('.e-priority').value,
+      description: form.querySelector('.e-desc').value.trim(),
+      requested_by: form.querySelector('.e-reqby').value.trim()
+    };
+    if(!payload.description || !payload.requested_by){
+      errEl.textContent = 'Preencha descrição e solicitado por.';
+      errEl.style.display = 'inline';
+      return;
+    }
+    if(!isPending){
+      var deliveredBy = form.querySelector('.e-delivered-by').value.trim();
+      if(!deliveredBy){
+        errEl.textContent = 'Preencha quem entregou.';
+        errEl.style.display = 'inline';
+        return;
+      }
+      payload.delivered_by = deliveredBy;
+      payload.purchase_place = form.querySelector('.e-place').value.trim();
+      var val = parseFloat(form.querySelector('.e-value').value);
+      payload.total_value = isNaN(val) ? 0 : val;
+    }
+    errEl.style.display = 'none';
+    var btn = form.querySelector('.save-edit');
+    btn.disabled = true;
+    sb.from('requests').update(payload).eq('id', id).then(function(res){
+      btn.disabled = false;
+      if(res.error){
+        errEl.textContent = 'Não foi possível salvar (' + res.error.message + ').';
+        errEl.style.display = 'inline';
+        return;
+      }
+      state.editingId = null;
+      showToast('Alterações salvas.');
+      loadRequests();
+    });
   }
 
   function renderEntry(r){
     var cat = catInfo(r.category);
     var isPending = r.status==='pending';
-    var html = '<li class="entry">';
+    var html = '<li class="entry'+(r.priority==='urgente' && isPending ? ' urgent-entry' : '')+'">';
     html += '<div class="stripe '+r.status+'"></div>';
     html += '<div class="entry-body">';
     html += '<div class="entry-top">';
     html += '<div class="entry-meta-l">';
     html += '<span class="cat-tag"><span class="sw" style="background:'+cat.color+'"></span>'+cat.label+'</span>';
+    if(r.priority==='urgente'){
+      html += '<span class="status-pill" style="background:var(--danger);color:#2a0e0a;">Urgente</span>';
+    }
     html += '<span class="status-pill '+r.status+'">'+(isPending?'Pendente':'Entregue')+'</span>';
     html += '</div>';
     html += '<div class="entry-meta-r">'+fmtDate(r.created_at)+'</div>';
@@ -706,13 +827,61 @@
 
     if(isAdminIdentity()){
       html += '<div class="entry-admin">';
+      html += '<button class="btn secondary edit-toggle-btn" data-id="'+r.id+'">'+(state.editingId===r.id?'Cancelar edição':'Editar')+'</button>';
       html += '<button class="btn danger delete-btn" data-id="'+r.id+'">Excluir chamado</button>';
       html += '</div>';
+      if(state.editingId===r.id){
+        html += renderEditForm(r);
+      }
     }
 
     html += '</div></li>';
     return html;
   }
+
+  function csvCell(v){
+    v = v==null ? '' : String(v);
+    if(/[",\n;]/.test(v)) v = '"' + v.replace(/"/g,'""') + '"';
+    return v;
+  }
+  document.getElementById('exportBtn').addEventListener('click', function(){
+    var items = state.requests.filter(function(r){
+      if(state.filterStatus!=='all' && r.status!==state.filterStatus) return false;
+      if(state.filterCat && r.category!==state.filterCat) return false;
+      if(state.onlyUrgent && r.priority!=='urgente') return false;
+      if(state.search){
+        var q = state.search.toLowerCase();
+        var hay = ((r.description||'') + ' ' + (r.requested_by||'')).toLowerCase();
+        if(hay.indexOf(q) === -1) return false;
+      }
+      return true;
+    });
+    var header = ['Categoria','Prioridade','Descrição','Solicitado por','Data solicitação','Status','Entregue por','Local da compra','Valor total','Data da entrega'];
+    var rows = items.map(function(r){
+      return [
+        catInfo(r.category).label,
+        r.priority==='urgente' ? 'Urgente' : 'Normal',
+        r.description,
+        r.requested_by,
+        fmtDate(r.created_at),
+        r.status==='pending' ? 'Pendente' : 'Entregue',
+        r.delivered_by||'',
+        r.purchase_place||'',
+        r.total_value!=null ? String(r.total_value).replace('.',',') : '',
+        fmtDate(r.delivered_at)
+      ].map(csvCell).join(';');
+    });
+    var csv = '\uFEFF' + header.map(csvCell).join(';') + '\n' + rows.join('\n');
+    var blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'ap5-suprimentos-' + new Date().toISOString().slice(0,10) + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
 
   document.getElementById('lightbox').addEventListener('click', function(){
     this.classList.remove('open');
@@ -785,25 +954,72 @@
     errEl.style.display='none';
     var btn = document.getElementById('submitReq');
     btn.disabled = true;
-    sb.from('requests').insert({
+    var payload = {
       category: state.newCat,
+      priority: state.newPriority,
       description: desc,
       requested_by: name,
       status: 'pending'
-    }).then(function(res){
+    };
+    function resetComposer(){
+      document.getElementById('reqDesc').value = '';
+      document.getElementById('reqName').value = '';
+      document.getElementById('composer').classList.remove('open');
+      state.newPriority = 'normal';
+      Array.prototype.forEach.call(document.querySelectorAll('#prioritySelectNew .cat-opt'), function(b){
+        b.classList.toggle('active', b.getAttribute('data-p')==='normal');
+      });
+    }
+    sb.from('requests').insert(payload).then(function(res){
       btn.disabled = false;
       if(res.error){
         errEl.textContent = 'Não foi possível salvar (' + res.error.message + ').';
         errEl.style.display='inline';
         return;
       }
-      document.getElementById('reqDesc').value = '';
-      document.getElementById('reqName').value = '';
-      document.getElementById('composer').classList.remove('open');
+      resetComposer();
       showToast('Solicitação registrada.');
       loadRequests();
+    }).catch(function(){
+      // Sem internet: guarda no aparelho e envia sozinho quando a conexão voltar.
+      btn.disabled = false;
+      queueOfflineRequest(payload);
+      resetComposer();
+      showToast('Sem conexão — será enviado automaticamente quando a internet voltar.');
     });
   }
+
+  // ---------- fila offline ----------
+  var OFFLINE_QUEUE_KEY = 'ap5_offline_queue';
+  function getOfflineQueue(){
+    try{ return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]'); }catch(e){ return []; }
+  }
+  function setOfflineQueue(q){
+    try{ localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(q)); }catch(e){}
+  }
+  function queueOfflineRequest(payload){
+    var q = getOfflineQueue();
+    q.push(payload);
+    setOfflineQueue(q);
+  }
+  function flushOfflineQueue(){
+    if(!sb) return;
+    var q = getOfflineQueue();
+    if(!q.length) return;
+    var next = q[0];
+    sb.from('requests').insert(next).then(function(res){
+      if(res.error) return; // tenta de novo mais tarde
+      var rest = getOfflineQueue().slice(1);
+      setOfflineQueue(rest);
+      if(rest.length){
+        flushOfflineQueue();
+      } else {
+        showToast('Solicitações pendentes enviadas com sucesso.');
+        loadRequests();
+      }
+    }).catch(function(){ /* ainda sem internet, tenta de novo depois */ });
+  }
+  window.addEventListener('online', flushOfflineQueue);
   document.getElementById('submitReq').addEventListener('click', submitNewRequest);
 
   function submitDelivery(id, form){
@@ -896,6 +1112,7 @@
     ];
   }
 
+  var CACHE_KEY = 'ap5_cache_requests';
   function loadRequests(){
     if(!sb){
       seedLocalExample();
@@ -907,14 +1124,29 @@
     sb.from('requests').select('*').order('created_at', {ascending:false}).limit(500).then(function(res){
       state.loading = false;
       if(res.error){
-        showBanner('Não foi possível carregar as solicitações (' + res.error.message + '). Verifique a configuração no README.md.');
-        renderList();
+        showOfflineFallback('Não foi possível carregar as solicitações (' + res.error.message + ').');
         return;
       }
       hideBanner();
       state.requests = res.data || [];
+      try{ localStorage.setItem(CACHE_KEY, JSON.stringify(state.requests)); }catch(e){}
       renderList();
+    }).catch(function(){
+      // Falha de rede de verdade (ex: sem internet) — cai para os dados salvos localmente.
+      showOfflineFallback('Sem conexão com a internet no momento.');
     });
+  }
+  function showOfflineFallback(reason){
+    state.loading = false;
+    var cached = null;
+    try{ cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); }catch(e){}
+    if(cached && cached.length){
+      state.requests = cached;
+      showBanner(reason + ' Mostrando a última versão salva neste dispositivo — pode estar desatualizada.');
+    } else {
+      showBanner(reason + ' Ainda não há nenhuma versão salva neste dispositivo para mostrar.');
+    }
+    renderList();
   }
 
   function init(){
@@ -936,11 +1168,13 @@
     }
 
     loadRequests();
+    flushOfflineQueue();
     // Atualização automática a cada 12s, para todo mundo ver o que os outros fizeram.
     // Pulamos a atualização enquanto alguém está preenchendo o formulário de entrega,
     // para não apagar o que a pessoa está digitando.
     if(sb){
       setInterval(function(){
+        flushOfflineQueue();
         if(state.openDeliverId) return;
         loadRequests();
       }, 12000);
@@ -948,6 +1182,12 @@
   }
 
   init();
+
+  if('serviceWorker' in navigator){
+    window.addEventListener('load', function(){
+      navigator.serviceWorker.register('./sw.js').catch(function(){ /* PWA é só um extra, ignora falha silenciosamente */ });
+    });
+  }
 })();
 </script>
 </body>
