@@ -874,7 +874,14 @@
     renderCatFilter();
     loadRequests();
     // Atualização automática a cada 12s, para todo mundo ver o que os outros fizeram.
-    if(sb){ setInterval(loadRequests, 12000); }
+    // Pulamos a atualização enquanto alguém está preenchendo o formulário de entrega,
+    // para não apagar o que a pessoa está digitando.
+    if(sb){
+      setInterval(function(){
+        if(state.openDeliverId) return;
+        loadRequests();
+      }, 12000);
+    }
   }
 
   init();
