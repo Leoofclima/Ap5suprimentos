@@ -2,8 +2,12 @@
 // Guarda o "esqueleto" do site (HTML, manifest, ícones) para ele continuar abrindo
 // mesmo sem internet. Os dados (solicitações) continuam vindo do Supabase quando
 // há conexão; sem conexão, o site mostra a última versão salva no navegador.
+//
+// Estratégia: SEMPRE tenta buscar a versão mais nova na rede primeiro. Só usa a
+// cópia salva localmente se a rede falhar de verdade (sem internet). Isso evita
+// o problema clássico de "atualizei o site mas continuo vendo a versão antiga".
 
-var CACHE_NAME = 'ap5-shell-v1';
+var CACHE_NAME = 'ap5-shell-v2';
 var SHELL_FILES = [
   './',
   './index.html',
@@ -40,19 +44,17 @@ self.addEventListener('fetch', function(event){
   }
 
   event.respondWith(
-    caches.match(req).then(function(cached){
-      var network = fetch(req).then(function(res){
-        if(res && res.status === 200){
-          var copy = res.clone();
-          caches.open(CACHE_NAME).then(function(cache){ cache.put(req, copy); });
-        }
-        return res;
-      }).catch(function(){
-        // Sem internet: cai para a cópia salva, se existir.
+    fetch(req).then(function(res){
+      if(res && res.status === 200){
+        var copy = res.clone();
+        caches.open(CACHE_NAME).then(function(cache){ cache.put(req, copy); });
+      }
+      return res;
+    }).catch(function(){
+      // Sem internet de verdade: cai para a cópia salva, se existir.
+      return caches.match(req).then(function(cached){
         return cached || caches.match('./index.html');
       });
-      // Mostra a versão em cache na hora (rápido), atualiza em segundo plano.
-      return cached || network;
     })
   );
 });
