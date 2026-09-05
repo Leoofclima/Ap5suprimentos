@@ -572,6 +572,11 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function(){ t.classList.remove('show'); }, 3200);
   }
+  function isNetworkError(err){
+    if(!err) return false;
+    var msg = String(err.message || err);
+    return !navigator.onLine || /Failed to fetch|NetworkError|network request failed|Load failed/i.test(msg);
+  }
   function escapeHtml(s){
     return String(s==null?'':s).replace(/[&<>"']/g, function(c){
       return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
@@ -1173,6 +1178,12 @@
     sb.from('requests').insert(payload).then(function(res){
       btn.disabled = false;
       if(res.error){
+        if(isNetworkError(res.error)){
+          queueOfflineRequest(payload);
+          resetComposer();
+          showToast('Sem conexão — será enviado automaticamente quando a internet voltar.');
+          return;
+        }
         errEl.textContent = 'Não foi possível salvar (' + res.error.message + ').';
         errEl.style.display='inline';
         return;
@@ -1339,7 +1350,8 @@
     sb.from('requests').select('*').order('created_at', {ascending:false}).limit(500).then(function(res){
       state.loading = false;
       if(res.error){
-        showOfflineFallback('Não foi possível carregar as solicitações (' + res.error.message + ').');
+        var reason = isNetworkError(res.error) ? 'Sem conexão com a internet no momento.' : ('Não foi possível carregar as solicitações (' + res.error.message + ').');
+        showOfflineFallback(reason);
         return;
       }
       hideBanner();
