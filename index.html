@@ -735,7 +735,7 @@
       var claimBtn = document.querySelector('.claim-btn[data-id="'+r.id+'"]');
       if(claimBtn){ claimBtn.addEventListener('click', function(){ claimRequest(r.id); }); }
       var releaseBtn = document.querySelector('.release-btn[data-id="'+r.id+'"]');
-      if(releaseBtn){ releaseBtn.addEventListener('click', function(){ releaseRequest(r.id); }); }
+      if(releaseBtn){ releaseBtn.addEventListener('click', function(){ releaseRequest(r); }); }
       var postponeBtn = document.querySelector('.postpone-btn[data-id="'+r.id+'"]');
       if(postponeBtn){ postponeBtn.addEventListener('click', function(){ postponeRequest(r); }); }
       var cancelPostponeBtn = document.querySelector('.cancel-postpone-btn[data-id="'+r.id+'"]');
@@ -844,10 +844,13 @@
         loadRequests();
       });
   }
-  function releaseRequest(id){
+  function releaseRequest(r){
     if(!ensureConfigured()) return;
-    if(!isAdminIdentity()){ window.alert('Só o administrador pode liberar um chamado já assumido.'); return; }
-    sb.from('requests').update({ assigned_to: null, assigned_to_cpf: null, assigned_at: null }).eq('id', id).then(function(res){
+    if(!canManageRequest(r)){
+      window.alert('Só ' + r.assigned_to + ' ou o administrador pode soltar esse chamado.');
+      return;
+    }
+    sb.from('requests').update({ assigned_to: null, assigned_to_cpf: null, assigned_at: null }).eq('id', r.id).then(function(res){
       if(res.error){ window.alert('Não foi possível soltar (' + res.error.message + ').'); return; }
       showToast('Chamado liberado.');
       loadRequests();
@@ -931,7 +934,7 @@
       var canManage = canManageRequest(r);
       html += '<div class="deliver-toggle" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">';
       if(r.assigned_to){
-        if(isAdminIdentity()){
+        if(canManage){
           html += '<button class="btn secondary release-btn" data-id="'+r.id+'">Soltar chamado</button>';
         }
       } else {
@@ -945,7 +948,7 @@
         html += '<button class="btn secondary deliver-toggle-btn" data-id="'+r.id+'">'+
                 (state.openDeliverId===r.id ? 'Cancelar' : 'Marcar como entregue')+'</button>';
       } else {
-        html += '<span style="font-size:12px; color:var(--ink-faint);">🔒 só '+escapeHtml(r.assigned_to)+' ou o admin pode adiar/entregar este chamado</span>';
+        html += '<span style="font-size:12px; color:var(--ink-faint);">🔒 só '+escapeHtml(r.assigned_to)+' ou o admin pode adiar, entregar ou soltar este chamado</span>';
       }
       html += '</div>';
       html += '<div class="deliver-form'+(state.openDeliverId===r.id && canManage?' open':'')+'" data-id="'+r.id+'">';
