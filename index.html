@@ -232,6 +232,18 @@
     opacity:0; pointer-events:none; transition:opacity .25s ease, transform .25s ease; z-index:60;
   }
   #toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+  .history-overlay{ position:fixed; inset:0; background:rgba(0,0,0,.75); display:none; align-items:flex-start; justify-content:center; z-index:70; padding:40px 16px; overflow:auto; }
+  .history-overlay.open{ display:flex; }
+  .history-panel{ background:var(--paper-raised); border:1px solid var(--line); border-radius:6px; max-width:760px; width:100%; padding:26px 28px; box-shadow:var(--shadow); }
+  .history-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; gap:14px; }
+  .history-day{ border-top:1px solid var(--line); padding:14px 0; }
+  .history-day:first-child{ border-top:none; }
+  .history-day h3{ font-family:'JetBrains Mono', monospace; font-size:12.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--accent); margin:0 0 6px; }
+  .history-stats{ font-size:12.5px; color:var(--ink-soft); margin-bottom:10px; }
+  .history-item{ font-size:13.5px; padding:7px 0; border-bottom:1px dashed var(--line); color:var(--ink); }
+  .history-item:last-child{ border-bottom:none; }
+  .history-item .h-status{ font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; margin-left:8px; font-weight:600; }
 </style>
 </head>
 <body>
@@ -329,6 +341,7 @@
     <div class="filt-spacer"></div>
     <div id="catFilterRow" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
     <button class="btn secondary" id="exportBtn">⭳ Exportar CSV</button>
+    <button class="btn secondary" id="historyBtn">🕘 Histórico</button>
     <button class="btn secondary refresh-btn" id="refreshBtn">↻ Atualizar</button>
   </div>
 
@@ -340,6 +353,17 @@
 
 <div id="lightbox"><img id="lightboxImg" src=""></div>
 <div id="toast" class="toast"></div>
+
+<div id="historyOverlay" class="history-overlay">
+  <div class="history-panel">
+    <div class="history-head">
+      <h2 style="font-family:'Fraunces',serif; font-weight:600; margin:0;">Histórico por dia</h2>
+      <button class="btn secondary" id="closeHistory">Fechar</button>
+    </div>
+    <p style="font-size:12px; color:var(--ink-faint); margin:-8px 0 16px;">"Pendente agora" reflete o status no momento em que você abriu isto — não é uma foto do fim de cada dia.</p>
+    <div id="historyBody"></div>
+  </div>
+</div>
 
 <script>
 (function(){
@@ -532,6 +556,9 @@
     return d.toLocaleDateString('pt-BR', {day:'2-digit',month:'2-digit',year:'2-digit'}) + ' ' +
            d.toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'});
   }
+  function fmtDateOnly(d){
+    return d.toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit', year:'2-digit'});
+  }
   function fmtMoney(v){
     if(v==null || isNaN(v)) return 'R$ 0';
     return 'R$ ' + Number(v).toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2});
@@ -705,6 +732,14 @@
           submitEdit(r.id, editForm, r.status==='pending');
         });
       }
+      var claimBtn = document.querySelector('.claim-btn[data-id="'+r.id+'"]');
+      if(claimBtn){ claimBtn.addEventListener('click', function(){ claimRequest(r.id); }); }
+      var releaseBtn = document.querySelector('.release-btn[data-id="'+r.id+'"]');
+      if(releaseBtn){ releaseBtn.addEventListener('click', function(){ releaseRequest(r.id); }); }
+      var postponeBtn = document.querySelector('.postpone-btn[data-id="'+r.id+'"]');
+      if(postponeBtn){ postponeBtn.addEventListener('click', function(){ postponeRequest(r); }); }
+      var cancelPostponeBtn = document.querySelector('.cancel-postpone-btn[data-id="'+r.id+'"]');
+      if(cancelPostponeBtn){ cancelPostponeBtn.addEventListener('click', function(){ cancelPostpone(r.id); }); }
     });
     renderStats();
   }
@@ -778,6 +813,50 @@
     });
   }
 
+  // ---------- assumir / adiar ----------
+  function ensureConfigured(){
+    if(!sb){ window.alert('Isso exige o site conectado ao banco de dados.'); return false; }
+    return true;
+  }
+  function claimRequest(id){
+    if(!ensureConfigured()) return;
+    var identity = getIdentity();
+    if(!identity) return;
+    sb.from('requests').update({ assigned_to: identity.name, assigned_at: new Date().toISOString() }).eq('id', id).then(function(res){
+      if(res.error){ window.alert('Não foi possível assumir (' + res.error.message + ').'); return; }
+      showToast('Você assumiu esse chamado.');
+      loadRequests();
+    });
+  }
+  function releaseRequest(id){
+    if(!ensureConfigured()) return;
+    sb.from('requests').update({ assigned_to: null, assigned_at: null }).eq('id', id).then(function(res){
+      if(res.error){ window.alert('Não foi possível soltar (' + res.error.message + ').'); return; }
+      showToast('Chamado liberado.');
+      loadRequests();
+    });
+  }
+  function postponeRequest(r){
+    if(!ensureConfigured()) return;
+    var identity = getIdentity();
+    var base = r.postponed_until ? new Date(r.postponed_until+'T00:00:00') : new Date();
+    base.setDate(base.getDate()+1);
+    var iso = base.getFullYear()+'-'+String(base.getMonth()+1).padStart(2,'0')+'-'+String(base.getDate()).padStart(2,'0');
+    sb.from('requests').update({ postponed_until: iso, postponed_by: identity?identity.name:null }).eq('id', r.id).then(function(res){
+      if(res.error){ window.alert('Não foi possível adiar (' + res.error.message + ').'); return; }
+      showToast('Adiado até ' + fmtDateOnly(base) + '.');
+      loadRequests();
+    });
+  }
+  function cancelPostpone(id){
+    if(!ensureConfigured()) return;
+    sb.from('requests').update({ postponed_until: null, postponed_by: null }).eq('id', id).then(function(res){
+      if(res.error){ window.alert('Não foi possível cancelar o adiamento (' + res.error.message + ').'); return; }
+      showToast('Adiamento cancelado.');
+      loadRequests();
+    });
+  }
+
   function renderEntry(r){
     var cat = catInfo(r.category);
     var isPending = r.status==='pending';
@@ -796,6 +875,14 @@
     html += '</div>';
     html += '<div class="entry-desc">'+escapeHtml(r.description)+'</div>';
     html += '<div class="entry-req">solicitado por <b>'+escapeHtml(r.requested_by)+'</b></div>';
+    if(r.assigned_to){
+      html += '<div class="entry-req">🙋 sendo providenciado por <b>'+escapeHtml(r.assigned_to)+'</b></div>';
+    }
+    if(r.postponed_until){
+      var pDate = new Date(r.postponed_until+'T00:00:00');
+      var isPastDue = pDate < new Date(new Date().toDateString());
+      html += '<div class="entry-req" style="color:'+(isPastDue?'var(--pending-ink)':'var(--ink-soft)')+'">⏳ adiado até <b>'+fmtDateOnly(pDate)+'</b>'+(isPastDue?' (já passou)':'')+'</div>';
+    }
 
     if(!isPending){
       html += '<div class="delivery-info">';
@@ -810,13 +897,22 @@
     }
 
     if(isPending){
-      html += '<div class="deliver-toggle">';
+      html += '<div class="deliver-toggle" style="display:flex; gap:8px; flex-wrap:wrap;">';
+      if(r.assigned_to){
+        html += '<button class="btn secondary release-btn" data-id="'+r.id+'">Soltar chamado</button>';
+      } else {
+        html += '<button class="btn secondary claim-btn" data-id="'+r.id+'">Assumir chamado</button>';
+      }
+      html += '<button class="btn secondary postpone-btn" data-id="'+r.id+'">'+(r.postponed_until ? 'Adiar mais um dia' : 'Adiar p/ amanhã')+'</button>';
+      if(r.postponed_until){
+        html += '<button class="btn secondary cancel-postpone-btn" data-id="'+r.id+'">Cancelar adiamento</button>';
+      }
       html += '<button class="btn secondary deliver-toggle-btn" data-id="'+r.id+'">'+
               (state.openDeliverId===r.id ? 'Cancelar' : 'Marcar como entregue')+'</button>';
       html += '</div>';
       html += '<div class="deliver-form'+(state.openDeliverId===r.id?' open':'')+'" data-id="'+r.id+'">';
       html += '<div class="field-grid">';
-      html += '<div class="field"><label>Quem entregou</label><input type="text" class="d-name" placeholder="Nome de quem entregou"></div>';
+      html += '<div class="field"><label>Quem entregou</label><input type="text" class="d-name" value="'+escapeHtml(r.assigned_to||'')+'" placeholder="Nome de quem entregou"></div>';
       html += '<div class="field"><label>Onde comprou</label><input type="text" class="d-place" placeholder="Ex: Mercado Central, posto X"></div>';
       html += '<div class="field"><label>Valor total (R$)</label><input type="number" class="d-value" step="0.01" min="0" placeholder="0,00"></div>';
       html += '<div class="field"><label>Comprovante (foto)</label><div class="file-drop">Toque para anexar imagem<input type="file" accept="image/*"></div></div>';
@@ -881,6 +977,55 @@
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  });
+
+  function renderHistory(){
+    var body = document.getElementById('historyBody');
+    var groups = {};
+    state.requests.forEach(function(r){
+      var d = new Date(r.created_at);
+      var key = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      if(!groups[key]) groups[key] = [];
+      groups[key].push(r);
+    });
+    var keys = Object.keys(groups).sort().reverse();
+    if(keys.length===0){
+      body.innerHTML = '<p style="color:var(--ink-faint); font-size:13.5px;">Nenhum dado carregado ainda.</p>';
+      return;
+    }
+    var html = '';
+    keys.forEach(function(key){
+      var items = groups[key];
+      var pendingCount = items.filter(function(r){ return r.status==='pending'; }).length;
+      var postponedCount = items.filter(function(r){ return r.postponed_until; }).length;
+      var dateObj = new Date(key+'T00:00:00');
+      var label = dateObj.toLocaleDateString('pt-BR', {weekday:'long', day:'2-digit', month:'2-digit', year:'numeric'});
+      html += '<div class="history-day">';
+      html += '<h3>'+label+'</h3>';
+      html += '<div class="history-stats">'+items.length+' solicitação(ões) registrada(s) · '+pendingCount+' ainda pendente(s) agora'+(postponedCount?' · '+postponedCount+' adiada(s)':'')+'</div>';
+      items.forEach(function(r){
+        var cat = catInfo(r.category);
+        html += '<div class="history-item">';
+        html += escapeHtml(r.description)+' <span style="color:var(--ink-faint);">('+cat.label+', '+escapeHtml(r.requested_by)+')</span>';
+        html += '<span class="h-status" style="color:'+(r.status==='pending'?'var(--pending)':'var(--delivered)')+'">'+(r.status==='pending'?'Pendente':'Entregue')+'</span>';
+        if(r.postponed_until){
+          html += ' <span style="color:var(--ink-faint);">— adiado até '+fmtDateOnly(new Date(r.postponed_until+'T00:00:00'))+'</span>';
+        }
+        html += '</div>';
+      });
+      html += '</div>';
+    });
+    body.innerHTML = html;
+  }
+  document.getElementById('historyBtn').addEventListener('click', function(){
+    renderHistory();
+    document.getElementById('historyOverlay').classList.add('open');
+  });
+  document.getElementById('closeHistory').addEventListener('click', function(){
+    document.getElementById('historyOverlay').classList.remove('open');
+  });
+  document.getElementById('historyOverlay').addEventListener('click', function(e){
+    if(e.target === this) this.classList.remove('open');
   });
 
   document.getElementById('lightbox').addEventListener('click', function(){
