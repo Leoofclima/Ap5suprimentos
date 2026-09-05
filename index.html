@@ -874,7 +874,9 @@
     html += '<div class="entry-meta-r">'+fmtDate(r.created_at)+'</div>';
     html += '</div>';
     html += '<div class="entry-desc">'+escapeHtml(r.description)+'</div>';
-    html += '<div class="entry-req">solicitado por <b>'+escapeHtml(r.requested_by)+'</b></div>';
+    html += '<div class="entry-req">solicitado por <b>'+escapeHtml(r.requested_by)+'</b>'+
+            (isAdminIdentity() && r.requested_by_cpf ? ' <span style="color:var(--ink-faint);">· CPF '+formatCPF(r.requested_by_cpf)+'</span>' : '')+
+            '</div>';
     if(r.assigned_to){
       html += '<div class="entry-req">🙋 sendo providenciado por <b>'+escapeHtml(r.assigned_to)+'</b></div>';
     }
@@ -889,7 +891,9 @@
       if(r.receipt_url){
         html += '<img class="di-thumb" data-id="'+r.id+'" data-full="'+r.receipt_url+'" src="'+r.receipt_url+'">';
       }
-      html += '<div class="di-col">Entregue por<b>'+escapeHtml(r.delivered_by||'—')+'</b></div>';
+      html += '<div class="di-col">Entregue por<b>'+escapeHtml(r.delivered_by||'—')+'</b>'+
+              (isAdminIdentity() && r.delivered_by_cpf ? '<span style="font-weight:400; color:var(--ink-faint);">CPF '+formatCPF(r.delivered_by_cpf)+'</span>' : '')+
+              '</div>';
       html += '<div class="di-col">Onde comprou<b>'+escapeHtml(r.purchase_place||'—')+'</b></div>';
       html += '<div class="di-col">Valor total<b>'+fmtMoney(r.total_value)+'</b></div>';
       html += '<div class="di-col">Data da entrega<b>'+fmtDate(r.delivered_at)+'</b></div>';
@@ -952,20 +956,32 @@
       }
       return true;
     });
-    var header = ['Categoria','Prioridade','Descrição','Solicitado por','Data solicitação','Status','Entregue por','Local da compra','Valor total','Data da entrega'];
+    var isAdmin = isAdminIdentity();
+    var header = ['Categoria','Prioridade','Descrição','Solicitado por'];
+    if(isAdmin) header.push('CPF solicitante');
+    header.push('Data solicitação','Status','Entregue por');
+    if(isAdmin) header.push('CPF entregador');
+    header.push('Local da compra','Valor total','Data da entrega');
     var rows = items.map(function(r){
-      return [
+      var row = [
         catInfo(r.category).label,
         r.priority==='urgente' ? 'Urgente' : 'Normal',
         r.description,
-        r.requested_by,
+        r.requested_by
+      ];
+      if(isAdmin) row.push(r.requested_by_cpf ? formatCPF(r.requested_by_cpf) : '');
+      row.push(
         fmtDate(r.created_at),
         r.status==='pending' ? 'Pendente' : 'Entregue',
-        r.delivered_by||'',
+        r.delivered_by||''
+      );
+      if(isAdmin) row.push(r.delivered_by_cpf ? formatCPF(r.delivered_by_cpf) : '');
+      row.push(
         r.purchase_place||'',
         r.total_value!=null ? String(r.total_value).replace('.',',') : '',
         fmtDate(r.delivered_at)
-      ].map(csvCell).join(';');
+      );
+      return row.map(csvCell).join(';');
     });
     var csv = '\uFEFF' + header.map(csvCell).join(';') + '\n' + rows.join('\n');
     var blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
@@ -1099,11 +1115,13 @@
     errEl.style.display='none';
     var btn = document.getElementById('submitReq');
     btn.disabled = true;
+    var loggedIdentity = getIdentity();
     var payload = {
       category: state.newCat,
       priority: state.newPriority,
       description: desc,
       requested_by: name,
+      requested_by_cpf: loggedIdentity ? loggedIdentity.cpf : null,
       status: 'pending'
     };
     function resetComposer(){
@@ -1186,9 +1204,11 @@
     var blob = fileDrop._blob;
 
     function finishUpdate(receiptUrl){
+      var loggedIdentity = getIdentity();
       sb.from('requests').update({
         status: 'delivered',
         delivered_by: name,
+        delivered_by_cpf: loggedIdentity ? loggedIdentity.cpf : null,
         purchase_place: place,
         total_value: isNaN(value) ? 0 : value,
         receipt_url: receiptUrl || null,
