@@ -216,6 +216,14 @@
   .session-bar b{ color:var(--ink); }
   .session-bar button{ font-family:'JetBrains Mono', monospace; font-size:11.5px; background:transparent; border:1px solid var(--line); color:var(--ink-soft); border-radius:20px; padding:5px 12px; cursor:pointer; }
   .session-bar button:hover{ border-color:var(--ink-faint); color:var(--ink); }
+
+  #toast{
+    position:fixed; left:50%; bottom:26px; transform:translateX(-50%) translateY(16px);
+    background:var(--paper-raised); border:1px solid var(--accent); color:var(--ink);
+    padding:12px 22px; border-radius:6px; font-size:13.5px; box-shadow:var(--shadow);
+    opacity:0; pointer-events:none; transition:opacity .25s ease, transform .25s ease; z-index:60;
+  }
+  #toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
 </style>
 </head>
 <body>
@@ -301,6 +309,7 @@
       <button data-v="pending">Pendentes</button>
       <button data-v="delivered">Entregues</button>
     </div>
+    <input type="text" id="searchBox" placeholder="Buscar por descrição ou nome…" style="flex:1 1 200px; max-width:240px;">
     <div class="filt-spacer"></div>
     <div id="catFilterRow" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
     <button class="btn secondary refresh-btn" id="refreshBtn">↻ Atualizar</button>
@@ -313,6 +322,7 @@
 </div>
 
 <div id="lightbox"><img id="lightboxImg" src=""></div>
+<div id="toast" class="toast"></div>
 
 <script>
 (function(){
@@ -343,21 +353,19 @@
 
   // CPF com permissão de administrador — único autorizado a excluir chamados, independente do status.
   var ADMIN_CPF = '62195938390';
-  // Senha exigida apenas para esse CPF, guardada como hash SHA-256 (não em texto puro no código-fonte).
-  var ADMIN_PASSWORD_HASH = 'b8fbc25757f3d845772babd2a83774d071e3293820623a9923270297a964b025';
+  // E-mail interno usado só para autenticar o administrador no Supabase Auth.
+  // A senha de verdade NÃO fica no código — fica cadastrada no painel do Supabase
+  // (Authentication > Users), então não dá pra descobrir ela lendo o site.
+  var ADMIN_EMAIL = 'admin@ap5suprimentos.app';
+  // Sessão real do Supabase Auth. Só fica preenchida depois de um login validado pelo
+  // servidor — é o que faz a restrição de exclusão valer de fato no banco (RLS),
+  // e não só na aparência da tela.
+  var adminSession = null;
   function isAdminIdentity(){
     var identity = getIdentity();
     if(!identity) return false;
-    return String(identity.cpf||'').replace(/\D/g,'') === ADMIN_CPF;
-  }
-  function sha256Hex(text){
-    var data = new TextEncoder().encode(text);
-    return crypto.subtle.digest('SHA-256', data).then(function(buf){
-      var bytes = new Uint8Array(buf);
-      var hex = '';
-      for(var i=0;i<bytes.length;i++) hex += bytes[i].toString(16).padStart(2,'0');
-      return hex;
-    });
+    if(String(identity.cpf||'').replace(/\D/g,'') !== ADMIN_CPF) return false;
+    return !!adminSession;
   }
 
   function formatCPF(v){
@@ -449,22 +457,31 @@
       errEl.style.display = 'inline';
       return;
     }
+    if(!sb){
+      errEl.textContent = 'Login de administrador exige o site conectado ao banco de dados.';
+      errEl.style.display = 'inline';
+      return;
+    }
     var btn = document.getElementById('loginSubmit');
     btn.disabled = true;
-    sha256Hex(password).then(function(hash){
+    sb.auth.signInWithPassword({ email: ADMIN_EMAIL, password: password }).then(function(res){
       btn.disabled = false;
-      if(hash !== ADMIN_PASSWORD_HASH){
+      if(res.error || !res.data || !res.data.session){
         errEl.textContent = 'Senha incorreta.';
         errEl.style.display = 'inline';
         return;
       }
+      adminSession = res.data.session;
       errEl.style.display = 'none';
       var identity = { name:name, cpf:cpf };
       setIdentity(identity);
       showApp(identity);
+      renderList();
     });
   });
   document.getElementById('logoutBtn').addEventListener('click', function(){
+    if(sb && adminSession){ sb.auth.signOut(); }
+    adminSession = null;
     clearIdentity();
     document.getElementById('loginName').value = '';
     document.getElementById('loginCpf').value = '';
@@ -478,7 +495,9 @@
     filterStatus: 'all',
     filterCat: null,
     newCat: CATEGORIES[0].key,
-    openDeliverId: null
+    openDeliverId: null,
+    loading: true,
+    search: ''
   };
 
   var configured = SUPABASE_URL.indexOf('COLE_AQUI') === -1 && SUPABASE_ANON_KEY.indexOf('COLE_AQUI') === -1;
@@ -496,6 +515,15 @@
   function fmtMoney(v){
     if(v==null || isNaN(v)) return 'R$ 0';
     return 'R$ ' + Number(v).toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2});
+  }
+  var toastTimer = null;
+  function showToast(msg){
+    var t = document.getElementById('toast');
+    if(!t) return;
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ t.classList.remove('show'); }, 3200);
   }
   function escapeHtml(s){
     return String(s==null?'':s).replace(/[&<>"']/g, function(c){
@@ -553,6 +581,11 @@
     loadRequests();
   });
 
+  document.getElementById('searchBox').addEventListener('input', function(){
+    state.search = this.value.trim();
+    renderList();
+  });
+
   function renderStats(){
     var total = state.requests.length;
     var pending = state.requests.filter(function(r){return r.status==='pending';}).length;
@@ -579,10 +612,16 @@
     var items = state.requests.filter(function(r){
       if(state.filterStatus!=='all' && r.status!==state.filterStatus) return false;
       if(state.filterCat && r.category!==state.filterCat) return false;
+      if(state.search){
+        var q = state.search.toLowerCase();
+        var hay = ((r.description||'') + ' ' + (r.requested_by||'')).toLowerCase();
+        if(hay.indexOf(q) === -1) return false;
+      }
       return true;
     });
     if(items.length===0){
       list.innerHTML='';
+      empty.textContent = state.loading ? 'Carregando solicitações…' : 'Nenhuma solicitação encontrada com esses filtros.';
       empty.style.display='block';
       renderStats();
       return;
@@ -687,6 +726,11 @@
     input.addEventListener('change', function(){
       var file = input.files[0];
       if(!file) return;
+      if(file.size > 8*1024*1024){
+        window.alert('Essa imagem é muito grande (máximo 8MB). Tente uma foto com resolução menor.');
+        input.value = '';
+        return;
+      }
       fileDrop.textContent = 'Processando imagem…';
       compressImage(file, function(blob){
         var url = URL.createObjectURL(blob);
@@ -756,6 +800,7 @@
       document.getElementById('reqDesc').value = '';
       document.getElementById('reqName').value = '';
       document.getElementById('composer').classList.remove('open');
+      showToast('Solicitação registrada.');
       loadRequests();
     });
   }
@@ -795,6 +840,7 @@
           return;
         }
         state.openDeliverId = null;
+        showToast('Entrega confirmada.');
         loadRequests();
       });
     }
@@ -827,6 +873,7 @@
         window.alert('Não foi possível excluir (' + res.error.message + ').');
         return;
       }
+      showToast('Chamado excluído.');
       loadRequests();
     });
   }
@@ -853,12 +900,15 @@
     if(!sb){
       seedLocalExample();
       showBanner('Este site ainda não está conectado a um banco de dados — mostrando dados de exemplo (nada aqui é salvo).\nAbra o README.md para configurar em poucos minutos.');
+      state.loading = false;
       renderList();
       return;
     }
     sb.from('requests').select('*').order('created_at', {ascending:false}).limit(500).then(function(res){
+      state.loading = false;
       if(res.error){
         showBanner('Não foi possível carregar as solicitações (' + res.error.message + '). Verifique a configuração no README.md.');
+        renderList();
         return;
       }
       hideBanner();
@@ -872,6 +922,19 @@
     if(identity){ showApp(identity); } else { showGate(); }
     renderCatSelect();
     renderCatFilter();
+
+    if(sb){
+      // Restaura a sessão de admin se o navegador já tinha uma válida (ex: recarregou a página).
+      sb.auth.getSession().then(function(res){
+        adminSession = (res.data && res.data.session) || null;
+        renderList();
+      });
+      sb.auth.onAuthStateChange(function(_event, session){
+        adminSession = session || null;
+        renderList();
+      });
+    }
+
     loadRequests();
     // Atualização automática a cada 12s, para todo mundo ver o que os outros fizeram.
     // Pulamos a atualização enquanto alguém está preenchendo o formulário de entrega,
