@@ -822,11 +822,27 @@
     if(!ensureConfigured()) return;
     var identity = getIdentity();
     if(!identity) return;
-    sb.from('requests').update({ assigned_to: identity.name, assigned_at: new Date().toISOString() }).eq('id', id).then(function(res){
-      if(res.error){ window.alert('Não foi possível assumir (' + res.error.message + ').'); return; }
-      showToast('Você assumiu esse chamado.');
-      loadRequests();
-    });
+    // O .is('assigned_to', null) faz o banco só aceitar a mudança se NINGUÉM tiver
+    // assumido ainda — isso evita que dois cliques quase simultâneos "ganhem" os dois.
+    sb.from('requests')
+      .update({ assigned_to: identity.name, assigned_at: new Date().toISOString() })
+      .eq('id', id)
+      .is('assigned_to', null)
+      .select()
+      .then(function(res){
+        if(res.error){ window.alert('Não foi possível assumir (' + res.error.message + ').'); return; }
+        if(!res.data || res.data.length===0){
+          // Ninguém foi atualizado: outra pessoa assumiu um instante antes.
+          sb.from('requests').select('assigned_to').eq('id', id).then(function(res2){
+            var who = (res2.data && res2.data[0] && res2.data[0].assigned_to) || 'outra pessoa';
+            window.alert('Não foi possível assumir: ' + who + ' já está cuidando disso agora. Se precisar, fale direto com ' + who + '.');
+            loadRequests();
+          });
+          return;
+        }
+        showToast('Você assumiu esse chamado.');
+        loadRequests();
+      });
   }
   function releaseRequest(id){
     if(!ensureConfigured()) return;
@@ -1213,11 +1229,18 @@
         total_value: isNaN(value) ? 0 : value,
         receipt_url: receiptUrl || null,
         delivered_at: new Date().toISOString()
-      }).eq('id', id).then(function(res){
+      }).eq('id', id).eq('status', 'pending').select().then(function(res){
         btn.disabled = false;
         if(res.error){
           errEl.textContent = 'Não foi possível salvar (' + res.error.message + ').';
           errEl.style.display='inline';
+          return;
+        }
+        if(!res.data || res.data.length===0){
+          errEl.textContent = 'Esse chamado já foi marcado como entregue por outra pessoa alguns instantes atrás.';
+          errEl.style.display='inline';
+          state.openDeliverId = null;
+          loadRequests();
           return;
         }
         state.openDeliverId = null;
