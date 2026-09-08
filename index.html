@@ -292,11 +292,6 @@
     </div>
   </header>
 
-  <div class="dev-note">
-    <span class="dev-tag">Em testes</span>
-    Ferramenta desenvolvida por <strong>Leonardo</strong> e ainda em período de testes — dados e funcionamento podem mudar. Encontrou algo estranho? Me avise diretamente.
-  </div>
-
   <div id="dbBanner"></div>
 
   <section class="composer" id="composer">
@@ -410,6 +405,26 @@
     if(!identity) return false;
     if(String(identity.cpf||'').replace(/\D/g,'') !== ADMIN_CPF) return false;
     return !!adminSession;
+  }
+
+  // ID da sessão real do Supabase Auth (admin ou anônima) da pessoa usando o site
+  // agora — usada para o banco de dados conseguir checar "essa pessoa é mesmo quem
+  // assumiu esse chamado?" sem depender só do que está salvo no navegador.
+  var currentUserId = null;
+  function ensureCrewSession(){
+    if(!sb) return Promise.resolve(null);
+    return sb.auth.getSession().then(function(res){
+      var session = res.data && res.data.session;
+      if(session){
+        currentUserId = session.user.id;
+        return session;
+      }
+      return sb.auth.signInAnonymously().then(function(res2){
+        var s = (res2.data && res2.data.session) || null;
+        currentUserId = s ? s.user.id : null;
+        return s;
+      });
+    });
   }
 
   function formatCPF(v){
@@ -584,7 +599,9 @@
       errEl.style.display = 'none';
       var identity = { name:name, cpf:cpf };
       setIdentity(identity);
-      showApp(identity);
+      // Mesmo sem internet agora, deixa a pessoa entrar (dados salvos localmente
+      // continuam acessíveis); a sessão real é criada assim que a conexão voltar.
+      ensureCrewSession().then(function(){ showApp(identity); }, function(){ showApp(identity); });
       return;
     }
     if(!password){
@@ -607,6 +624,7 @@
         return;
       }
       adminSession = res.data.session;
+      currentUserId = res.data.session.user.id;
       errEl.style.display = 'none';
       var identity = { name:name, cpf:cpf };
       setIdentity(identity);
@@ -921,12 +939,13 @@
     if(!ensureConfigured()) return;
     var identity = getIdentity();
     if(!identity) return;
-    // O .is('assigned_to', null) faz o banco só aceitar a mudança se NINGUÉM tiver
+    // O .is('assigned_to_uid', null) faz o banco só aceitar a mudança se NINGUÉM tiver
     // assumido ainda — isso evita que dois cliques quase simultâneos "ganhem" os dois.
+    // assigned_to_uid é o id da sessão real (não dá pra falsificar editando o navegador).
     sb.from('requests')
-      .update({ assigned_to: identity.name, assigned_to_cpf: identity.cpf, assigned_at: new Date().toISOString() })
+      .update({ assigned_to: identity.name, assigned_to_cpf: identity.cpf, assigned_to_uid: currentUserId, assigned_at: new Date().toISOString() })
       .eq('id', id)
-      .is('assigned_to', null)
+      .is('assigned_to_uid', null)
       .select()
       .then(function(res){
         if(res.error){ window.alert('Não foi possível assumir (' + res.error.message + ').'); return; }
@@ -949,7 +968,7 @@
       window.alert('Só ' + r.assigned_to + ' ou o administrador pode soltar esse chamado.');
       return;
     }
-    sb.from('requests').update({ assigned_to: null, assigned_to_cpf: null, assigned_at: null }).eq('id', r.id).then(function(res){
+    sb.from('requests').update({ assigned_to: null, assigned_to_cpf: null, assigned_to_uid: null, assigned_at: null }).eq('id', r.id).then(function(res){
       if(res.error){ window.alert('Não foi possível soltar (' + res.error.message + ').'); return; }
       showToast('Chamado liberado.');
       loadRequests();
@@ -957,9 +976,8 @@
   }
   function canManageRequest(r){
     if(isAdminIdentity()) return true;
-    if(!r.assigned_to_cpf) return true; // ninguém assumiu ainda: qualquer um pode agir
-    var identity = getIdentity();
-    return !!(identity && identity.cpf === r.assigned_to_cpf);
+    if(!r.assigned_to_uid) return true; // ninguém assumiu ainda: qualquer um pode agir
+    return !!(currentUserId && currentUserId === r.assigned_to_uid);
   }
   function postponeRequest(r){
     if(!ensureConfigured()) return;
@@ -1327,6 +1345,7 @@
       description: desc,
       requested_by: name,
       requested_by_cpf: loggedIdentity ? loggedIdentity.cpf : null,
+      requested_by_uid: currentUserId,
       status: 'pending'
     };
     function resetComposer(){
@@ -1380,18 +1399,24 @@
     if(!sb) return;
     var q = getOfflineQueue();
     if(!q.length) return;
-    var next = q[0];
-    sb.from('requests').insert(next).then(function(res){
-      if(res.error) return; // tenta de novo mais tarde
-      var rest = getOfflineQueue().slice(1);
-      setOfflineQueue(rest);
-      if(rest.length){
-        flushOfflineQueue();
-      } else {
-        showToast('Solicitações pendentes enviadas com sucesso.');
-        loadRequests();
-      }
-    }).catch(function(){ /* ainda sem internet, tenta de novo depois */ });
+    var identity = getIdentity();
+    var isAdmin = identity && String(identity.cpf||'').replace(/\D/g,'') === ADMIN_CPF;
+    var ready = (currentUserId || isAdmin) ? Promise.resolve() : ensureCrewSession();
+    ready.then(function(){
+      var next = q[0];
+      if(currentUserId) next.requested_by_uid = currentUserId;
+      sb.from('requests').insert(next).then(function(res){
+        if(res.error) return; // tenta de novo mais tarde
+        var rest = getOfflineQueue().slice(1);
+        setOfflineQueue(rest);
+        if(rest.length){
+          flushOfflineQueue();
+        } else {
+          showToast('Solicitações pendentes enviadas com sucesso.');
+          loadRequests();
+        }
+      }).catch(function(){ /* ainda sem internet, tenta de novo depois */ });
+    }, function(){ /* ainda sem internet pra nem criar sessão, tenta de novo depois */ });
   }
   window.addEventListener('online', flushOfflineQueue);
   document.getElementById('submitReq').addEventListener('click', submitNewRequest);
@@ -1426,6 +1451,7 @@
         status: 'delivered',
         delivered_by: name,
         delivered_by_cpf: loggedIdentity ? loggedIdentity.cpf : null,
+        delivered_by_uid: currentUserId,
         purchase_place: place,
         total_value: isNaN(value) ? 0 : value,
         receipt_url: receiptUrl || null,
@@ -1546,15 +1572,26 @@
     renderCatFilter();
 
     if(sb){
-      // Restaura a sessão de admin se o navegador já tinha uma válida (ex: recarregou a página).
+      // Restaura a sessão (admin ou anônima) se o navegador já tinha uma válida.
       sb.auth.getSession().then(function(res){
-        adminSession = (res.data && res.data.session) || null;
+        var session = res.data && res.data.session;
+        if(session){
+          currentUserId = session.user.id;
+          adminSession = session.user.is_anonymous ? null : session;
+        }
         renderList();
       });
       sb.auth.onAuthStateChange(function(_event, session){
-        adminSession = session || null;
+        currentUserId = session ? session.user.id : null;
+        adminSession = (session && !session.user.is_anonymous) ? session : null;
         renderList();
       });
+      // Se é um tripulante comum (não-admin) que já estava logado antes dessa
+      // atualização, garante que ele ganhe uma sessão real também, sem precisar
+      // fazer login de novo.
+      if(identity && String(identity.cpf||'').replace(/\D/g,'') !== ADMIN_CPF){
+        ensureCrewSession().then(function(){ renderList(); });
+      }
     }
 
     loadRequests();
