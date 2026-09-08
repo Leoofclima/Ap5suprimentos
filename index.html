@@ -1565,6 +1565,28 @@
     renderList();
   }
 
+  function applyRealtimeChange(payload){
+    var list = state.requests;
+    if(payload.eventType === 'INSERT'){
+      if(!list.some(function(r){ return r.id === payload.new.id; })){
+        list.unshift(payload.new);
+      }
+    } else if(payload.eventType === 'UPDATE'){
+      var idx = list.findIndex(function(r){ return r.id === payload.new.id; });
+      if(idx > -1) list[idx] = payload.new; else list.unshift(payload.new);
+    } else if(payload.eventType === 'DELETE'){
+      var delId = payload.old && payload.old.id;
+      state.requests = list.filter(function(r){ return r.id !== delId; });
+    }
+    try{ localStorage.setItem(CACHE_KEY, JSON.stringify(state.requests)); }catch(e){}
+    // Se alguém está no meio de preencher um formulário de entrega ou edição,
+    // atualiza os dados por baixo dos panos mas só redesenha a tela depois —
+    // assim ninguém perde o que estava digitando.
+    if(!state.openDeliverId && !state.editingId){
+      renderList();
+    }
+  }
+
   function init(){
     var identity = getIdentity();
     if(identity){ showApp(identity); } else { showGate(); }
@@ -1596,15 +1618,21 @@
 
     loadRequests();
     flushOfflineQueue();
-    // Atualização automática a cada 12s, para todo mundo ver o que os outros fizeram.
-    // Pulamos a atualização enquanto alguém está preenchendo o formulário de entrega,
-    // para não apagar o que a pessoa está digitando.
+
     if(sb){
+      // Tempo real de verdade: o Supabase avisa na hora que alguém cria, edita
+      // ou apaga um chamado — sem precisar ficar checando de tempos em tempos.
+      sb.channel('requests-realtime')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'requests' }, applyRealtimeChange)
+        .subscribe();
+
+      // Reforço bem espaçado, só como rede de segurança caso a conexão em tempo
+      // real caia por algum motivo (ex: rede instável no barco).
       setInterval(function(){
         flushOfflineQueue();
         if(state.openDeliverId) return;
         loadRequests();
-      }, 12000);
+      }, 60000);
     }
   }
 
