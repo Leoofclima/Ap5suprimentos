@@ -499,12 +499,21 @@
       }).then(function(sub){
         var json = sub.toJSON();
         var identity = getIdentity();
-        return sb.from('push_subscriptions').upsert({
+        var row = {
           endpoint: json.endpoint,
           p256dh: json.keys.p256dh,
           auth: json.keys.auth,
           subscriber_name: identity ? identity.name : null
-        }, { onConflict: 'endpoint' });
+        };
+        // Tenta inserir; se já existir esse endpoint (aparelho já tinha se inscrito
+        // antes), atualiza em vez de usar "upsert" — evita uma pegadinha do Postgres
+        // em que ON CONFLICT exige visibilidade de leitura que não damos por privacidade.
+        return sb.from('push_subscriptions').insert(row).then(function(res){
+          if(res.error && res.error.code === '23505'){
+            return sb.from('push_subscriptions').update(row).eq('endpoint', row.endpoint);
+          }
+          return res;
+        });
       }).then(function(res){
         if(res && res.error){ window.alert('Não foi possível salvar a inscrição (' + res.error.message + ').'); return; }
         showToast('Notificações ativadas neste aparelho.');
