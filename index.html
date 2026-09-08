@@ -1172,6 +1172,8 @@
       doc.setTextColor(20);
       doc.text(c.label + ': ' + fmtMoney(c.value), chartX+12, ly);
     });
+    var legendBottom = legendY + byCat.length*13;
+    var tableStartY = Math.max(summaryY + 70, legendBottom + 20);
 
     // tabela detalhada
     var head = [['Categoria','Descrição','Solicitado por','Status','Entregue por','Valor','Data']];
@@ -1189,7 +1191,7 @@
     doc.autoTable({
       head: head,
       body: body,
-      startY: summaryY + 70,
+      startY: tableStartY,
       styles: { fontSize: 8.5, cellPadding: 4 },
       headStyles: { fillColor: [20,30,26] },
       margin: { left: margin, right: margin }
