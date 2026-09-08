@@ -10,6 +10,8 @@
 <link rel="apple-touch-icon" href="./icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -341,7 +343,7 @@
     <button class="chip" id="urgentChip"><span class="sw" style="background:var(--danger)"></span>Só urgentes</button>
     <div class="filt-spacer"></div>
     <div id="catFilterRow" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
-    <button class="btn secondary" id="exportBtn">⭳ Exportar CSV</button>
+    <button class="btn secondary" id="exportBtn">⭳ Exportar PDF</button>
     <button class="btn secondary" id="historyBtn">🕘 Histórico</button>
     <button class="btn secondary refresh-btn" id="refreshBtn">↻ Atualizar</button>
   </div>
@@ -1073,12 +1075,46 @@
     return html;
   }
 
-  function csvCell(v){
-    v = v==null ? '' : String(v);
-    if(/[",\n;]/.test(v)) v = '"' + v.replace(/"/g,'""') + '"';
-    return v;
+  // Desenha um gráfico de pizza num canvas e devolve a imagem (data URL) pra colar no PDF.
+  function drawPieChart(dataByCat){
+    var size = 480;
+    var canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    var ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0,0,size,size);
+
+    var total = dataByCat.reduce(function(s,c){ return s+c.value; }, 0);
+    var cx = size/2, cy = size/2, r = size*0.42;
+    if(total <= 0){
+      ctx.fillStyle = '#888';
+      ctx.font = '20px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Sem valores entregues neste filtro', cx, cy);
+      return canvas.toDataURL('image/png');
+    }
+    var start = -Math.PI/2;
+    dataByCat.forEach(function(c){
+      if(c.value <= 0) return;
+      var slice = (c.value/total) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, r, start, start+slice);
+      ctx.closePath();
+      ctx.fillStyle = c.color;
+      ctx.fill();
+      start += slice;
+    });
+    // anel branco no centro (estilo "donut"), ajuda a leitura
+    ctx.beginPath();
+    ctx.arc(cx, cy, r*0.5, 0, Math.PI*2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    return canvas.toDataURL('image/png');
   }
+
   document.getElementById('exportBtn').addEventListener('click', function(){
+    if(!window.jspdf){ window.alert('Não foi possível carregar o gerador de PDF (sem conexão?). Tente novamente com internet.'); return; }
     var items = state.requests.filter(function(r){
       if(state.filterStatus!=='all' && r.status!==state.filterStatus) return false;
       if(state.filterCat && r.category!==state.filterCat) return false;
@@ -1091,42 +1127,75 @@
       return true;
     });
     var isAdmin = isAdminIdentity();
-    var header = ['Categoria','Prioridade','Descrição','Solicitado por'];
-    if(isAdmin) header.push('CPF solicitante');
-    header.push('Data solicitação','Status','Entregue por');
-    if(isAdmin) header.push('CPF entregador');
-    header.push('Local da compra','Valor total','Data da entrega');
-    var rows = items.map(function(r){
-      var row = [
-        catInfo(r.category).label,
-        r.priority==='urgente' ? 'Urgente' : 'Normal',
-        r.description,
-        r.requested_by
-      ];
-      if(isAdmin) row.push(r.requested_by_cpf ? formatCPF(r.requested_by_cpf) : '');
-      row.push(
-        fmtDate(r.created_at),
-        r.status==='pending' ? 'Pendente' : 'Entregue',
-        r.delivered_by||''
-      );
-      if(isAdmin) row.push(r.delivered_by_cpf ? formatCPF(r.delivered_by_cpf) : '');
-      row.push(
-        r.purchase_place||'',
-        r.total_value!=null ? String(r.total_value).replace('.',',') : '',
-        fmtDate(r.delivered_at)
-      );
-      return row.map(csvCell).join(';');
+
+    // valores entregues, somados por categoria (só o que tem status entregue)
+    var byCat = CATEGORIES.map(function(c){
+      var value = items.filter(function(r){ return r.status==='delivered' && r.category===c.key; })
+                        .reduce(function(s,r){ return s + (Number(r.total_value)||0); }, 0);
+      return { key:c.key, label:c.label, color:c.color, value: value };
     });
-    var csv = '\uFEFF' + header.map(csvCell).join(';') + '\n' + rows.join('\n');
-    var blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = 'ap5-suprimentos-' + new Date().toISOString().slice(0,10) + '.csv';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    var totalValue = byCat.reduce(function(s,c){ return s+c.value; }, 0);
+    var pendingCount = items.filter(function(r){ return r.status==='pending'; }).length;
+    var deliveredCount = items.filter(function(r){ return r.status==='delivered'; }).length;
+
+    var doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'a4' });
+    var pageW = doc.internal.pageSize.getWidth();
+    var margin = 40;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(18);
+    doc.text('AP5 — Relatório de Suprimentos', margin, 50);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.setTextColor(110);
+    doc.text('Gerado em ' + new Date().toLocaleString('pt-BR'), margin, 68);
+    doc.setTextColor(20);
+
+    doc.setFontSize(11);
+    var summaryY = 92;
+    doc.text('Total de solicitações: ' + items.length, margin, summaryY);
+    doc.text('Pendentes: ' + pendingCount, margin, summaryY+16);
+    doc.text('Entregues: ' + deliveredCount, margin, summaryY+32);
+    doc.text('Valor total entregue: ' + fmtMoney(totalValue), margin, summaryY+48);
+
+    // gráfico de pizza + legenda, lado direito
+    var chartImg = drawPieChart(byCat);
+    var chartSize = 130;
+    var chartX = pageW - margin - chartSize;
+    doc.addImage(chartImg, 'PNG', chartX, summaryY-20, chartSize, chartSize);
+    var legendY = summaryY - 20 + chartSize + 14;
+    doc.setFontSize(9);
+    byCat.forEach(function(c, i){
+      var ly = legendY + i*13;
+      doc.setFillColor(c.color);
+      doc.rect(chartX, ly-8, 8, 8, 'F');
+      doc.setTextColor(20);
+      doc.text(c.label + ': ' + fmtMoney(c.value), chartX+12, ly);
+    });
+
+    // tabela detalhada
+    var head = [['Categoria','Descrição','Solicitado por','Status','Entregue por','Valor','Data']];
+    var body = items.map(function(r){
+      return [
+        catInfo(r.category).label + (r.priority==='urgente' ? ' 🔴' : ''),
+        r.description || '',
+        r.requested_by || '',
+        r.status==='pending' ? 'Pendente' : 'Entregue',
+        r.delivered_by || '—',
+        r.total_value!=null && r.status==='delivered' ? fmtMoney(r.total_value) : '—',
+        fmtDate(r.status==='delivered' ? r.delivered_at : r.created_at)
+      ];
+    });
+    doc.autoTable({
+      head: head,
+      body: body,
+      startY: summaryY + 70,
+      styles: { fontSize: 8.5, cellPadding: 4 },
+      headStyles: { fillColor: [20,30,26] },
+      margin: { left: margin, right: margin }
+    });
+
+    doc.save('ap5-suprimentos-' + new Date().toISOString().slice(0,10) + '.pdf');
   });
 
   function renderHistory(){
