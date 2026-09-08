@@ -274,6 +274,7 @@
 
   <div class="session-bar" id="sessionBar">
     Conectado como <b id="sessionName"></b>
+    <button id="notifBtn">🔔 Ativar notificações</button>
     <button id="logoutBtn">Sair</button>
   </div>
 
@@ -450,7 +451,89 @@
     document.querySelector('.wrap').classList.remove('hidden');
     document.getElementById('sessionBar').style.display = 'flex';
     document.getElementById('sessionName').textContent = identity.name;
+    updateNotifButton();
   }
+
+  // ---------- notificações push ----------
+  var VAPID_PUBLIC_KEY = 'BAKK6OWVDmMp1cDzEiTXVGSbrfBbVabvIaLIh6Uz1ei2bK4k7l-77rEiYI5OIXfOY__nZ-rzv0zHLU5suPj4dbs';
+  function urlBase64ToUint8Array(base64String){
+    var padding = '='.repeat((4 - base64String.length % 4) % 4);
+    var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    var rawData = window.atob(base64);
+    var outputArray = new Uint8Array(rawData.length);
+    for(var i=0;i<rawData.length;i++){ outputArray[i] = rawData.charCodeAt(i); }
+    return outputArray;
+  }
+  function pushSupported(){
+    return 'serviceWorker' in navigator && 'PushManager' in window;
+  }
+  function updateNotifButton(){
+    var btn = document.getElementById('notifBtn');
+    if(!btn) return;
+    if(!pushSupported() || !sb){
+      btn.textContent = '🔕 Notificações indisponíveis';
+      btn.disabled = true;
+      return;
+    }
+    btn.disabled = false;
+    navigator.serviceWorker.ready.then(function(reg){
+      return reg.pushManager.getSubscription();
+    }).then(function(sub){
+      btn.textContent = sub ? '🔕 Desativar notificações' : '🔔 Ativar notificações';
+      btn.setAttribute('data-active', sub ? '1' : '0');
+    }).catch(function(){});
+  }
+  function enableNotifications(){
+    if(!pushSupported()){ window.alert('Seu navegador não suporta notificações push.'); return; }
+    if(!ensureConfigured()) return;
+    Notification.requestPermission().then(function(perm){
+      if(perm !== 'granted'){
+        window.alert('Permissão de notificação negada. Para ativar depois, permita notificações para este site nas configurações do navegador.');
+        return;
+      }
+      navigator.serviceWorker.ready.then(function(reg){
+        return reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+        });
+      }).then(function(sub){
+        var json = sub.toJSON();
+        var identity = getIdentity();
+        return sb.from('push_subscriptions').upsert({
+          endpoint: json.endpoint,
+          p256dh: json.keys.p256dh,
+          auth: json.keys.auth,
+          subscriber_name: identity ? identity.name : null
+        }, { onConflict: 'endpoint' });
+      }).then(function(res){
+        if(res && res.error){ window.alert('Não foi possível salvar a inscrição (' + res.error.message + ').'); return; }
+        showToast('Notificações ativadas neste aparelho.');
+        updateNotifButton();
+      }).catch(function(err){
+        window.alert('Não foi possível ativar notificações (' + (err&&err.message||err) + ').');
+      });
+    });
+  }
+  function disableNotifications(){
+    if(!ensureConfigured()) return;
+    navigator.serviceWorker.ready.then(function(reg){
+      return reg.pushManager.getSubscription();
+    }).then(function(sub){
+      if(!sub){ updateNotifButton(); return; }
+      var endpoint = sub.endpoint;
+      return sub.unsubscribe().then(function(){
+        return sb.from('push_subscriptions').delete().eq('endpoint', endpoint);
+      });
+    }).then(function(){
+      showToast('Notificações desativadas neste aparelho.');
+      updateNotifButton();
+    }).catch(function(err){
+      window.alert('Não foi possível desativar (' + (err&&err.message||err) + ').');
+    });
+  }
+  document.getElementById('notifBtn').addEventListener('click', function(){
+    if(this.getAttribute('data-active')==='1'){ disableNotifications(); } else { enableNotifications(); }
+  });
 
   document.getElementById('loginCpf').addEventListener('input', function(){
     this.value = formatCPF(this.value);
