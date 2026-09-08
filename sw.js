@@ -7,7 +7,7 @@
 // cópia salva localmente se a rede falhar de verdade (sem internet). Isso evita
 // o problema clássico de "atualizei o site mas continuo vendo a versão antiga".
 
-var CACHE_NAME = 'ap5-shell-v2';
+var CACHE_NAME = 'ap5-shell-v3';
 var SHELL_FILES = [
   './',
   './index.html',
@@ -55,6 +55,34 @@ self.addEventListener('fetch', function(event){
       return caches.match(req).then(function(cached){
         return cached || caches.match('./index.html');
       });
+    })
+  );
+});
+
+// ---------- notificações push ----------
+self.addEventListener('push', function(event){
+  var data = { title: 'AP5 — Suprimentos', body: 'Há novidade no registro de bordo.' };
+  try{ if(event.data) data = event.data.json(); }catch(e){}
+  event.waitUntil(
+    self.registration.showNotification(data.title || 'AP5 — Suprimentos', {
+      body: data.body || '',
+      icon: './icon-192.png',
+      badge: './icon-192.png',
+      data: { url: data.url || './' }
+    })
+  );
+});
+
+self.addEventListener('notificationclick', function(event){
+  event.notification.close();
+  var url = (event.notification.data && event.notification.data.url) || './';
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(windowClients){
+      for(var i=0;i<windowClients.length;i++){
+        var client = windowClients[i];
+        if('focus' in client) return client.focus();
+      }
+      if(clients.openWindow) return clients.openWindow(url);
     })
   );
 });
