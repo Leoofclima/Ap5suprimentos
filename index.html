@@ -284,6 +284,28 @@
     font-size:16px; cursor:pointer; display:flex; align-items:center; justify-content:center;
     box-shadow:var(--shadow);
   }
+
+  .cat-select-dropdown{
+    font-family:'JetBrains Mono', monospace; font-size:12.5px; color:var(--ink);
+    background:var(--paper-raised); border:1px solid var(--line); border-radius:20px;
+    padding:7px 12px; cursor:pointer;
+  }
+
+  .menu-wrap{ position:relative; }
+  #moreMenuBtn{ padding:7px 12px; font-size:16px; line-height:1; }
+  .menu-pop{
+    display:none; position:absolute; top:calc(100% + 6px); right:0; z-index:50;
+    background:var(--paper-raised); border:1px solid var(--line); border-radius:8px;
+    box-shadow:var(--shadow); min-width:170px; overflow:hidden; flex-direction:column;
+  }
+  .menu-pop.open{ display:flex; }
+  .menu-pop button{
+    background:transparent; border:none; text-align:left; padding:10px 14px;
+    font-family:'JetBrains Mono', monospace; font-size:12.5px; color:var(--ink);
+    cursor:pointer;
+  }
+  .menu-pop button:hover{ background:var(--accent-tint); }
+  .menu-pop button + button{ border-top:1px solid var(--line); }
 </style>
 </head>
 <body>
@@ -377,10 +399,15 @@
     <input type="text" id="searchBox" placeholder="Buscar por descrição ou nome…" style="flex:1 1 200px; max-width:240px;">
     <button class="chip" id="urgentChip"><span class="sw" style="background:var(--danger)"></span>Só urgentes</button>
     <div class="filt-spacer"></div>
-    <div id="catFilterRow" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
-    <button class="btn secondary" id="exportBtn">⭳ Exportar PDF</button>
-    <button class="btn secondary" id="historyBtn">🕘 Histórico</button>
-    <button class="btn secondary refresh-btn" id="refreshBtn">↻ Atualizar</button>
+    <select id="catFilterSelect" class="cat-select-dropdown"></select>
+    <div class="menu-wrap">
+      <button class="btn secondary" id="moreMenuBtn" aria-label="Mais opções">⋮</button>
+      <div class="menu-pop" id="moreMenuPop">
+        <button id="exportBtn">⭳ Exportar PDF</button>
+        <button id="historyBtn">🕘 Histórico</button>
+        <button id="refreshBtn">↻ Atualizar agora</button>
+      </div>
+    </div>
   </div>
 
   <ul class="manifest" id="manifestList"></ul>
@@ -750,22 +777,29 @@
   }
 
   function renderCatFilter(){
-    var row = document.getElementById('catFilterRow');
-    var html = '<button class="chip'+(state.filterCat===null?' active':'')+'" data-k="">Todas categorias</button>';
+    var select = document.getElementById('catFilterSelect');
+    var html = '<option value=""'+(state.filterCat===null?' selected':'')+'>Todas categorias</option>';
     html += CATEGORIES.map(function(c){
-      return '<button class="chip'+(state.filterCat===c.key?' active':'')+'" data-k="'+c.key+'">'+
-             '<span class="sw" style="background:'+c.color+'"></span>'+c.label+'</button>';
+      return '<option value="'+c.key+'"'+(state.filterCat===c.key?' selected':'')+'>'+c.label+'</option>';
     }).join('');
-    row.innerHTML = html;
-    Array.prototype.forEach.call(row.querySelectorAll('.chip'), function(btn){
-      btn.addEventListener('click', function(){
-        var k = btn.getAttribute('data-k');
-        state.filterCat = k === '' ? null : k;
-        renderCatFilter();
-        renderList();
-      });
-    });
+    select.innerHTML = html;
   }
+  document.getElementById('catFilterSelect').addEventListener('change', function(){
+    state.filterCat = this.value === '' ? null : this.value;
+    renderList();
+  });
+
+  document.getElementById('moreMenuBtn').addEventListener('click', function(e){
+    e.stopPropagation();
+    document.getElementById('moreMenuPop').classList.toggle('open');
+  });
+  document.addEventListener('click', function(e){
+    var pop = document.getElementById('moreMenuPop');
+    if(pop.classList.contains('open') && !pop.contains(e.target)){
+      pop.classList.remove('open');
+    }
+  });
+  function closeMoreMenu(){ document.getElementById('moreMenuPop').classList.remove('open'); }
 
   Array.prototype.forEach.call(document.querySelectorAll('#prioritySelectNew .cat-opt'), function(btn){
     btn.addEventListener('click', function(){
@@ -792,6 +826,7 @@
 
   document.getElementById('refreshBtn').addEventListener('click', function(){
     loadRequests();
+    closeMoreMenu();
   });
 
   document.getElementById('searchBox').addEventListener('input', function(){
@@ -1172,6 +1207,7 @@
   }
 
   document.getElementById('exportBtn').addEventListener('click', function(){
+    closeMoreMenu();
     if(!window.jspdf){ window.alert('Não foi possível carregar o gerador de PDF (sem conexão?). Tente novamente com internet.'); return; }
     var items = state.requests.filter(function(r){
       if(state.filterStatus!=='all' && r.status!==state.filterStatus) return false;
@@ -1297,6 +1333,7 @@
     body.innerHTML = html;
   }
   document.getElementById('historyBtn').addEventListener('click', function(){
+    closeMoreMenu();
     renderHistory();
     document.getElementById('historyOverlay').classList.add('open');
   });
