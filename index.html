@@ -4,6 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AP5 — Suprimentos</title>
+<script>
+  (function(){
+    try{
+      var saved = localStorage.getItem('ap5_theme');
+      var theme = saved || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+      document.documentElement.setAttribute('data-theme', theme);
+    }catch(e){}
+  })();
+</script>
 <link rel="manifest" href="./manifest.json">
 <meta name="theme-color" content="#070b09">
 <link rel="icon" href="./icon-192.png">
@@ -17,26 +26,47 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
-  :root{
-    /* Identidade fixa: casco preto, instrumentação verde. */
-    --paper: #070b09;
-    --paper-raised: #0e1712;
-    --ink: #e6f3ea;
-    --ink-soft: #7fa08d;
-    --ink-faint: #4d6459;
-    --line: #1d3327;
-    --accent: #2fdd8f;
-    --accent-deep: #7cf0b6;
-    --accent-tint: #12261c;
+  :root, :root[data-theme="dark"]{
+    /* Identidade: casco escuro, instrumentação verde — suavizado (menos preto puro). */
+    --paper: #171f1c;
+    --paper-raised: #212b27;
+    --ink: #eef5f1;
+    --ink-soft: #9db8ab;
+    --ink-faint: #5f7268;
+    --line: #35423c;
+    --accent: #3ee6a0;
+    --accent-deep: #8ff3c8;
+    --accent-tint: #1c2f27;
     --pending: #e0a83c;
     --pending-ink: #f3c979;
-    --pending-bg: #2c2211;
-    --delivered: #2fdd8f;
+    --pending-bg: #3d3116;
+    --delivered: #3ee6a0;
     --delivered-ink: #8ff0bd;
-    --delivered-bg: #0f2a1c;
+    --delivered-bg: #163829;
     --danger: #e2685c;
-    --shadow: 0 1px 2px rgba(0,0,0,.45), 0 10px 30px -10px rgba(0,0,0,.7);
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px -10px rgba(0,0,0,.65);
     color-scheme: dark;
+  }
+  :root[data-theme="light"]{
+    /* Tema claro — mesma identidade, mais legível sob sol forte. */
+    --paper: #f4f7f5;
+    --paper-raised: #ffffff;
+    --ink: #10241a;
+    --ink-soft: #4d6459;
+    --ink-faint: #8fa89c;
+    --line: #d8e6de;
+    --accent: #17a765;
+    --accent-deep: #0f7a49;
+    --accent-tint: #e3f6ec;
+    --pending: #b9791c;
+    --pending-ink: #7a4f10;
+    --pending-bg: #fdf1dc;
+    --delivered: #17a765;
+    --delivered-ink: #0f7a49;
+    --delivered-bg: #e3f6ec;
+    --danger: #c94a3c;
+    --shadow: 0 1px 2px rgba(0,0,0,.06), 0 10px 30px -10px rgba(0,0,0,.15);
+    color-scheme: light;
   }
 
   *{box-sizing:border-box;}
@@ -246,9 +276,19 @@
   .history-item{ font-size:13.5px; padding:7px 0; border-bottom:1px dashed var(--line); color:var(--ink); }
   .history-item:last-child{ border-bottom:none; }
   .history-item .h-status{ font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; margin-left:8px; font-weight:600; }
+
+  #themeToggle{
+    position:fixed; top:14px; right:14px; z-index:110;
+    width:38px; height:38px; border-radius:50%;
+    background:var(--paper-raised); border:1px solid var(--line); color:var(--ink);
+    font-size:16px; cursor:pointer; display:flex; align-items:center; justify-content:center;
+    box-shadow:var(--shadow);
+  }
 </style>
 </head>
 <body>
+
+<button id="themeToggle" aria-label="Alternar tema claro/escuro">🌙</button>
 
 <div id="loginGate">
   <div class="login-card">
@@ -1635,6 +1675,21 @@
       }, 60000);
     }
   }
+
+  function updateThemeIcon(){
+    var theme = document.documentElement.getAttribute('data-theme');
+    document.getElementById('themeToggle').textContent = theme === 'light' ? '☀️' : '🌙';
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if(meta) meta.setAttribute('content', theme === 'light' ? '#f4f7f5' : '#171f1c');
+  }
+  document.getElementById('themeToggle').addEventListener('click', function(){
+    var current = document.documentElement.getAttribute('data-theme');
+    var next = current === 'light' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', next);
+    try{ localStorage.setItem('ap5_theme', next); }catch(e){}
+    updateThemeIcon();
+  });
+  updateThemeIcon();
 
   init();
 
